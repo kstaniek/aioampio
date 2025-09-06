@@ -1,0 +1,50 @@
+outputs:
+  - type: stdout
+    format: "{timestamp} {dir} id=0x{id:08X} dlc={dlc} data={data_hex} {topic} {payload}"
+
+codecs:
+  - module: aioampio.codec.ampio
+
+floors:
+  - id: floor1
+    name: Ground floor
+    areas:
+      - id: area1
+        name: Garage
+
+devices:
+  - can_id: 0x6f41
+    name: MSENS Garage
+    model: 44
+    pcb: 3
+    sw_version: 63
+    area: Garage
+    sensors:
+      - id: temperature1
+        name: Temperatura
+        device_class: temperature
+        states: temperature.1
+      - id: humidity1
+        name: Wilgotność
+        states: s16b10000.1
+        device_class: humidity
+      - id: aap1
+        name: Ciśnienie bezwzględne
+        states: s16b10000.2
+        device_class: atmospheric_pressure
+      - id: noise1
+        name: Hałas
+        states: s16b10000.3
+        device_class: sound_pressure
+      - id: brightness1
+        name: Jasność
+        states: s16b10000.4
+        device_class: illuminance
+      - id: aqi1
+        name: Jakość powietrza
+        states: s16b10000.5
+        device_class: aqi
+      - id: rap1
+        name: Ciśnienie względne
+        states: s16b10000.6
+        device_class: atmospheric_pressure

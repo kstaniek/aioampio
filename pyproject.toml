@@ -1,0 +1,219 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = ["setuptools>=62.3"]
+
+[project]
+name = "aioampio"
+# The version is set by GH action on release
+authors = [
+  {name = "Klaudiusz Staniek", email = "kstaniek@gmail.com"},
+]
+classifiers = [
+  "Environment :: Console",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+  "caneth",
+  "pydantic>=2.6",
+  "dacite",
+]
+description = "Python module to talk to Ampio devices."
+license = {text = "Apache-2.0"}
+readme = "README.md"
+requires-python = ">=3.12"
+version = "0.0.0"
+
+[project.optional-dependencies]
+test = [
+  "codespell==2.4.1",
+  "mypy==1.17.1",
+  "pre-commit==4.3.0",
+  "pre-commit-hooks==6.0.0",
+  "pylint==3.3.8",
+  "pytest==8.4.1",
+  "pytest-asyncio==1.1.0",
+  "pytest-aiohttp==1.1.0",
+  "pytest-cov==6.2.1",
+  "ruff==0.12.11",
+  "safety==3.3.1",
+]
+
+[project.scripts]
+aioampio = "aioampio.cli:main"
+
+
+[tool.codespell]
+ignore-words-list = "dependees,"
+
+[tool.setuptools]
+include-package-data = true
+platforms = ["any"]
+zip-safe = false
+
+[tool.setuptools.package-data]
+aioampio = ["py.typed"]
+
+[tool.setuptools.packages.find]
+include = ["aioampio*"]
+
+[tool.mypy]
+check_untyped_defs = true
+disallow_any_generics = false # TEMPORARY DISABLED
+disallow_incomplete_defs = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_decorators = true
+disallow_untyped_defs = true
+exclude = ["aioampio/util.py"]
+ignore_missing_imports = true
+no_implicit_optional = true
+no_implicit_reexport = true
+platform = "linux"
+python_version = "3.12"
+strict_optional = true
+warn_incomplete_stub = true
+warn_no_return = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unreachable = true
+warn_unused_configs = true
+warn_unused_ignores = true
+
+plugins = ["pydantic.mypy"]
+
+follow_imports = "silent"
+
+
+[tool.pylint.MAIN]
+ignore-paths = [ ]
+
+[tool.pylint.BASIC]
+good-names = [
+  "_",
+  "T",
+]
+
+[tool.pylint.DESIGN]
+max-args = 10
+max-attributes = 14
+
+[tool.pylint."MESSAGES CONTROL"]
+disable = [
+  "duplicate-code", # unavoidable
+  "format", # unavoidable
+  "unsubscriptable-object", # unavoidable
+  "unused-argument", # handled by ruff
+  "unspecified-encoding", # handled by ruff
+  "isinstance-second-argument-not-valid-type", # conflict with ruff
+  "fixme", # we're still developing
+  "too-few-public-methods", # unavoidable
+  "too-many-positional-arguments",
+]
+
+[tool.pylint.SIMILARITIES]
+ignore-imports = true
+
+[tool.pylint.FORMAT]
+max-line-length = 88
+
+[tool.pylint.VARIABLES]
+allowed-redefined-builtins = ["id"]
+
+[tool.pytest.ini_options]
+addopts = "--cov"
+asyncio_mode = "auto"
+
+[tool.ruff]
+fix = true
+line-length = 88
+show-fixes = true
+target-version = "py312"
+
+[tool.ruff.lint.pydocstyle]
+# Use Google-style docstrings.
+convention = "pep257"
+
+[tool.ruff.lint]
+ignore = [
+  "ANN002", # Just annoying, not really useful
+  "ANN003", # Just annoying, not really useful
+  "ANN401", # Opinioated warning on disallowing dynamically typed expressions
+  "D203", # Conflicts with other rules
+  "D213", # Conflicts with other rules
+  "D417", # False positives in some occasions
+  "EM101", # Just annoying, not really useful
+  "EM102", # Just annoying, not really useful
+  "FIX002", # Just annoying, not really useful
+  "PLR2004", # Just annoying, not really useful
+  "PD011", # Just annoying, not really useful
+  "TC001", # Just annoying, not really useful
+  "TC003", # Just annoying, not really useful
+  "S101", # assert is often used to satisfy type checking
+  "TD002", # Just annoying, not really useful
+  "TD003", # Just annoying, not really useful
+  "TD004", # Just annoying, not really useful
+  "COM812", # Conflict with the Ruff formatter
+  "ISC001", # Conflict with the Ruff formatter
+  "D101", # TEMPORARY DISABLED
+  "D102", # TEMPORARY DISABLED
+  "D103", # TEMPORARY DISABLED
+  "D107", # TEMPORARY DISABLED
+  "PGH004", # TEMPORARY DISABLED
+  "TRY300", # TEMPORARY DISABLED
+  "TRY003", # TEMPORARY DISABLED
+  "E501", # TEMPORARY DISABLED
+  "BLE001", # TEMPORARY DISABLED
+  "N818", # TEMPORARY DISABLED
+  "ANN201", # TEMPORARY DISABLED
+  "A001", # TEMPORARY DISABLED
+  "I001", # TEMPORARY DISABLED
+  "BLE001", # TEMPORARY DISABLED
+  "TRY201", # TEMPORARY DISABLED
+  "FBT001", # TEMPORARY DISABLED
+  "FBT002", # TEMPORARY DISABLED
+  "ANN202", # TEMPORARY DISABLED
+  "ANN001", # TEMPORARY DISABLED
+  "C403", # TEMPORARY DISABLED
+  "EM103", # TEMPORARY DISABLED
+  "PYI036", # TEMPORARY DISABLED
+  "A002", # TEMPORARY DISABLED
+  "TRY400", # TEMPORARY DISABLED
+  "RUF006", # TEMPORARY DISABLED
+  "UP041", # TEMPORARY DISABLED
+  "TRY401", # TEMPORARY DISABLED
+  "TRY301", # TEMPORARY DISABLED
+  "S311", # TEMPORARY DISABLED
+  "UP041", # TEMPORARY DISABLED
+  "PERF401", # TEMPORARY DISABLED
+  "ERA001", # TEMPORARY DISABLED
+  "ANN206", # TEMPORARY DISABLED
+  "RUF003", # TEMPORARY DISABLED
+  "ANN204", # TEMPORARY DISABLED
+  "PIE794", # TEMPORARY DISABLED
+
+  "S101", # Use of assert detected. As these are tests...
+  "SLF001", # Tests will access private/protected members...
+  "TC002", # pytest doesn't like this one...
+  "PT012", # annoying with tests
+]
+
+select = ["ALL"]
+
+[tool.ruff.lint.flake8-pytest-style]
+fixture-parentheses = false
+mark-parentheses = false
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+force-sort-within-sections = true
+known-first-party = ["aioampio"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 25
+
+[tool.ruff.lint.pylint]
+max-args = 10
+max-branches = 25
+max-returns = 15
+max-statements = 50
