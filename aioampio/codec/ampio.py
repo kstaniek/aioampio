@@ -24,6 +24,8 @@ _unknown_state_decoder: set[int] = set()
 
 @unique
 class StateType(Enum):
+    """Enum for Ampio state types."""
+
     UNKNOWN_1 = 0x01
     TEMPERATURE_INT = 0x05
     TEMPERATURE = 0x06
@@ -93,6 +95,7 @@ SATEL_RESPONSE_MAP = {
 
 
 def satel_response_to_str(value: int) -> str:
+    """Convert SATEL response code to string."""
     if value in SATEL_RESPONSE_MAP:
         return SATEL_RESPONSE_MAP[value]
     if 0x80 <= value <= 0x8F:
@@ -135,7 +138,7 @@ class StateFrameRouter(Codec):
             # Handle SATEL specific decoding
             try:
                 return _decode_satel_status(frame)
-            except Exception:
+            except Exception:  # pylint: disable=broad-except
                 self._logger.warning(
                     "Unknown SATEL frame received: %s", frame.data.hex()
                 )

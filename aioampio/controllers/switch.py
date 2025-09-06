@@ -1,8 +1,8 @@
 """Lights Controller."""
 
 from aioampio.models.switch import Switch
-from .base import AmpioResourceController
 from aioampio.models.resource import ResourceTypes
+from .base import AmpioResourceController
 
 
 class SwitchesController(AmpioResourceController[type[Switch]]):

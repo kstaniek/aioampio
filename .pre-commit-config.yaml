@@ -93,4 +93,3 @@ repos:
         types: [text]
         entry: scripts/run-in-env.sh trailing-whitespace-fixer
         stages: [pre-commit, pre-push, manual]
-     

@@ -22,4 +22,5 @@ class Switch:
     type: ResourceTypes = ResourceTypes.SWITCH
 
     def update(self, topic: str, data: dict[str, Any]) -> None:  # noqa: ARG002
+        """Update switch state from incoming data."""
         self.state = data.get("state")

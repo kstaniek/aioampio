@@ -40,6 +40,7 @@ class Valve:
     type: ResourceTypes = ResourceTypes.VALVE
 
     def update(self, topic: str, data: dict[str, Any]) -> None:
+        """Update valve state from incoming data."""
         entity_idx = get_entity_index(topic)
         if entity_idx is not None:
             if entity_idx < 4:  # valve

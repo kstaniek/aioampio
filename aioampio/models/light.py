@@ -34,6 +34,7 @@ class Light:
         return self.color
 
     def update(self, topic: str, data: dict[str, Any]) -> None:
+        """Update light state from incoming data."""
         if "rgb" in topic and self.state is not None:
             self.state.update(data)
         if "aout" in topic and "value" in data:

@@ -1,8 +1,8 @@
 """Covers Controller."""
 
 from aioampio.models.cover import Cover
-from .base import AmpioResourceController
 from aioampio.models.resource import ResourceTypes
+from .base import AmpioResourceController
 
 
 class CoversController(AmpioResourceController[type[Cover]]):

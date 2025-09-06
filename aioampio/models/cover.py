@@ -41,12 +41,14 @@ class Cover:
     type: ResourceTypes = ResourceTypes.COVER
 
     def update(self, topic: str, data: dict[str, Any]) -> None:
+        """Update cover state from incoming data."""
         entity_idx = get_entity_index(topic)
         if entity_idx is not None:
+            position = data.get("value", 0)
             if entity_idx < 4:  # cover
-                self.cover.position = data.get("value", 0)
-            if entity_idx > 5 and entity_idx < 10:
-                self.tilt.position = data.get("value", 0)
+                self.cover.position = position
+            elif entity_idx > 5 and entity_idx < 10:  # pylint: disable=chained-comparison
+                self.tilt.position = position
 
             if "binout" in topic:
                 state = data.get("state", False)

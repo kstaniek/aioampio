@@ -12,6 +12,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Start for the CLI."""
     ap = argparse.ArgumentParser(
         prog="aioampio", description="Ampio Bridge Test Harness"
     )

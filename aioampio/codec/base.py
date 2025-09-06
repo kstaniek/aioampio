@@ -25,4 +25,3 @@ class Codec(Protocol):
 
     def decode(self, frame: CANFrame) -> list[AmpioMessage] | None:
         """Decode a CAN frame into data."""
-        ...

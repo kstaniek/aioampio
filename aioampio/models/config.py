@@ -52,6 +52,8 @@ class OutputCfg(BaseModel):
 
 
 class CodecCfg(BaseModel):
+    """Configuration model for codecs."""
+
     module: str  # python module path to import for codec registration
 
 
@@ -66,9 +68,9 @@ class DeviceType(Enum):
     MCOM = 25
     MRT16S = 22
     MREL8S = 4
-    MSERVs = 10
-    MROL4s = 3
-    MINOC4p = 26
+    MSERVS = 10
+    MROL4S = 3
+    MINOC4P = 26
 
 
 class PlatformCfg(BaseModel):
@@ -87,6 +89,7 @@ class PlatformCfg(BaseModel):
         """Normalize state(s) to lowercase; keep original shape (str vs list[str])."""
 
         def validate_state(state: str) -> str:
+            """Validate individual state string."""
             state = state.strip().lower()
             parts = state.split(".")
             if len(parts) != 2:
@@ -99,10 +102,10 @@ class PlatformCfg(BaseModel):
                 )
             try:
                 int(parts[1])
-            except ValueError:
-                raise ValueError(  # noqa: B904
+            except ValueError as e:
+                raise ValueError(
                     f"state second part must be an integer, got: {parts[1]}"
-                )
+                ) from e
             return state
 
         if isinstance(v, str):
@@ -149,6 +152,7 @@ class SensorCfg(PlatformCfg):
     @field_validator("device_class", mode="after")
     @classmethod
     def validate_device_class(cls, value: str | None) -> str | None:
+        """Validate device class."""
         allowed_device_classes = {
             "atmospheric_pressure",
             "temperature",
@@ -174,6 +178,7 @@ class LightCfg(PlatformCfg):
 
     @model_validator(mode="after")
     def set_features(self) -> LightCfg:
+        """Set light features based on states if not explicitly set."""
         if has_state_prefix(self.states, "binout"):
             self.on = True
         if has_state_prefix(self.states, "aout"):
@@ -204,6 +209,7 @@ class BinarySensorCfg(PlatformCfg):
     @field_validator("device_class", mode="after")
     @classmethod
     def validate_device_class(cls, value: str | None) -> str | None:
+        """Validate device class."""
         allowed_device_classes = {
             "motion",
             "window",
@@ -232,6 +238,7 @@ class SwitchCfg(PlatformCfg):
     @field_validator("device_class", mode="after")
     @classmethod
     def validate_device_class(cls, value: str | None) -> str | None:
+        """Validate device class."""
         allowed_device_classes = {"outlet", "switch"}
         if value is not None and value not in allowed_device_classes:
             raise ValueError(
@@ -292,7 +299,8 @@ class Config(BaseModel):
 
     @model_validator(mode="after")
     def check_unique_can_id(self) -> Config:
-        can_ids = [device.can_id for device in self.devices]
+        """Ensure all device can_id values are unique."""
+        can_ids = [device.can_id for device in self.devices]  # pylint: disable=not-an-iterable
         duplicates = {f"{can_id:x}" for can_id in can_ids if can_ids.count(can_id) > 1}
         if duplicates:
             raise ValueError(

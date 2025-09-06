@@ -1,8 +1,9 @@
 """Controller for managing Ampio devices."""
 
-from .base import AmpioResourceController
-from aioampio.models.resource import ResourceTypes
 from aioampio.models.device import Device
+from aioampio.models.resource import ResourceTypes
+
+from .base import AmpioResourceController
 
 
 class DevicesController(AmpioResourceController[type[Device]]):

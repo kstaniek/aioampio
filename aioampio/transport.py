@@ -63,6 +63,7 @@ class CanethTransport:
         extended: bool | None = None,
         rtr: bool = False,
     ) -> None:
+        """Send a CAN frame."""
         if len(data) > 8:
             raise ValueError("CAN data length must be <= 8")
         await self.client.send(
@@ -75,5 +76,5 @@ class CanethTransport:
                 res = cb(frame)
                 if asyncio.iscoroutine(res):
                     await res
-            except Exception:
-                log.exception("Error in RX callback")
+            except Exception as exc:  # pylint: disable=broad-except
+                log.exception("Error in RX callback: %s", exc)

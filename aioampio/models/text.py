@@ -20,4 +20,5 @@ class Text:
     type: ResourceTypes = ResourceTypes.TEXT
 
     def update(self, topic: str, data: dict[str, Any]) -> None:  # noqa: ARG002
+        """Update text state from incoming data."""
         self.state = data.get("response")

@@ -22,4 +22,5 @@ class BinarySensor:
     type: ResourceTypes = ResourceTypes.BINARY_SENSOR
 
     def update(self, topic: str, data: dict[str, Any]) -> None:  # noqa: ARG002
+        """Update binary sensor state from incoming data."""
         self.state = data.get("state")

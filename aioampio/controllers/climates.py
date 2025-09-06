@@ -1,9 +1,10 @@
 """Climates Controller."""
 
 from aioampio.models.climate import Climate
+from aioampio.models.resource import ResourceTypes
+
 from .base import AmpioResourceController
 from .utils import get_entity_index
-from aioampio.models.resource import ResourceTypes
 
 
 class ClimatesController(AmpioResourceController[type[Climate]]):
