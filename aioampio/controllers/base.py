@@ -56,6 +56,7 @@ class AmpioResourceController[AmpioResource]:
         return list(self._items.values())
 
     async def initialize(self) -> None:
+        """Initialize the controller by loading existing resources."""
         resources = [x for x in self._bridge.config if x.type == self.item_type]
 
         for resource in resources:

@@ -27,8 +27,11 @@ from .transport import CanethTransport
 from .models.resource import ResourceTypes
 
 
-class AmpioBridge:
+class AmpioBridge:  # pylint: disable=too-many-instance-attributes
+    """Ampio Bridge main class."""
+
     def __init__(self, cfg_path: str, host: str, port: int) -> None:
+        """Initialize the Ampio Bridge."""
         self._host = host
         self._port = port
         self._cfg_path = cfg_path
@@ -54,8 +57,10 @@ class AmpioBridge:
         self._climates = ClimatesController(self)
 
         self._outputs: list[StdoutOutput] = []
+        self._whitelist: set[int] = set()
 
     def set_filters(self) -> None:
+        """Set CAN filters based on device whitelist from configuration."""
         self._whitelist: set[int] = {
             item.can_id  # type: ignore  # noqa: PGH003
             for item in self.config
@@ -70,11 +75,13 @@ class AmpioBridge:
             )
 
     def initialize_outputs(self) -> None:
+        """Initialize output handlers based on configuration."""
         for out in self.config.outputs:
             if out.type == "stdout":
                 self._outputs.append(StdoutOutput(fmt=out.format))
 
     async def initialize(self) -> None:
+        """Initialize the bridge."""
         await self.config.initialize(self._cfg_path)
         self.set_filters()
         self.initialize_outputs()
@@ -95,13 +102,16 @@ class AmpioBridge:
         )
 
     async def start(self) -> None:
+        """Start the bridge."""
         self.transport.on_frame(self._on_frame)
         await self.transport.start()
 
     async def stop(self) -> None:
+        """Stop the bridge."""
         await self.transport.close()
 
     async def _on_frame(self, frame: CANFrame) -> None:
+        """Handle incoming CAN frame."""
         msgs = registry().decode(frame)
         if msgs:
             # store/update entity state

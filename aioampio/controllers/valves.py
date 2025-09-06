@@ -1,8 +1,8 @@
 """Valves Controller."""
 
 from aioampio.models.valve import Valve
-from .base import AmpioResourceController
 from aioampio.models.resource import ResourceTypes
+from .base import AmpioResourceController
 
 
 class ValvesController(AmpioResourceController[type[Valve]]):

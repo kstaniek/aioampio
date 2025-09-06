@@ -24,6 +24,7 @@ class Climate:
     type: ResourceTypes = ResourceTypes.CLIMATE
 
     def update(self, topic: str, data: dict[str, Any]) -> None:  # noqa: ARG002
+        """Update climate state from incoming data."""
         self.current_temperature = data.get(
             "current_temperature", self.current_temperature
         )

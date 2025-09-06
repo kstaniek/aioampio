@@ -1,16 +1,20 @@
 """Registry for CAN frame codecs."""
 
 from __future__ import annotations
+
+import asyncio
 from importlib import import_module
 
 from caneth import CANFrame
 
 from .base import Codec, AmpioMessage
-import asyncio
 
 
 class CodecRegistry:
+    """Registry for CAN frame codecs."""
+
     def __init__(self) -> None:
+        """Initialize the codec registry."""
         self._codecs: list[Codec] = []
 
     def register(self, codec: Codec) -> None:
@@ -26,7 +30,10 @@ class CodecRegistry:
         return None
 
     async def load_modules(self, modules: list[str]) -> None:
+        """Dynamically load codec modules."""
+
         async def async_import(mod: str) -> None:
+            """Import a module asynchronously."""
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, import_module, mod)
 

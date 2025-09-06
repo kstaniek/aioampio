@@ -40,6 +40,7 @@ class Sensor:
                     self.unit_of_measurement = None
 
     def update(self, _topic: str, data: dict[str, int | float | str]) -> None:
+        """Update sensor state from incoming data."""
         value = data.get("value")
         try:
             if value is not None:

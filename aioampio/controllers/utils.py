@@ -5,11 +5,13 @@ import struct
 
 
 def get_trailing_number(s: str) -> int | None:
+    """Get trailing number from a string, e.g. 'sensor12' -> 12."""
     match = re.search(r"(\d+)$", s)
     return int(match.group(1)) if match else None
 
 
 def get_entity_index(s: str) -> int | None:
+    """Get entity index from a string, e.g. 'sensor12' -> 11 (0-based)."""
     entity_index = get_trailing_number(s)
     if entity_index is None or entity_index < 1:
         return None

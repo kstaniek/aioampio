@@ -3,8 +3,8 @@
 from aioampio.controllers.base import AmpioResourceController
 from aioampio.models.alarm_control_panel import AlarmControlPanel
 from aioampio.models.resource import ResourceTypes
-from .utils import get_trailing_number
 from aioampio.codec.helper import generate_multican_payload
+from .utils import get_trailing_number
 
 
 class AlarmControlPanelsController(AmpioResourceController[type[AlarmControlPanel]]):
@@ -14,6 +14,7 @@ class AlarmControlPanelsController(AmpioResourceController[type[AlarmControlPane
     item_cls = AlarmControlPanel
 
     async def arm_in_mode0(self, id: str, code: str) -> None:  # noqa: ARG002
+        """Arm the alarm in mode 0 (stay)."""
         device = self.get_device(id)
         if device is None:
             return
@@ -34,6 +35,7 @@ class AlarmControlPanelsController(AmpioResourceController[type[AlarmControlPane
             )
 
     async def disarm(self, id: str, code: str) -> None:  # noqa: ARG002
+        """Disarm the alarm."""
         device = self.get_device(id)
         if device is None:
             return

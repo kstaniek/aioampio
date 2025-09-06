@@ -2,8 +2,11 @@
 
 from collections.abc import Callable
 from enum import Enum
+from typing import TYPE_CHECKING
 
-from aioampio.models.resource import ResourceTypes
+
+if TYPE_CHECKING:
+    from aioampio.models.resource import ResourceTypes
 
 
 class EventType(Enum):

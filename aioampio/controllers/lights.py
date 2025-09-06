@@ -1,9 +1,10 @@
 """Lights Controller."""
 
 from aioampio.models.config import DeviceType
-from .base import AmpioResourceController
-from aioampio.models.resource import ResourceTypes
 from aioampio.models.light import Light
+from aioampio.models.resource import ResourceTypes
+
+from .base import AmpioResourceController
 
 
 class LightsController(AmpioResourceController[type[Light]]):
@@ -12,7 +13,7 @@ class LightsController(AmpioResourceController[type[Light]]):
     item_type = ResourceTypes.LIGHT
     item_cls = Light
 
-    async def set_state(
+    async def set_state(  # pylint: disable=too-many-branches
         self,
         id: str,
         on: bool | None = None,

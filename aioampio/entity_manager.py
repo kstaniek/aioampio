@@ -24,6 +24,7 @@ class EntityManager:
     """
 
     def __init__(self, bridge: AmpioBridge) -> None:
+        """Initialize the entity manager."""
         self._bridge = bridge
         self._values: dict[str, Any] = {}
         self._callbacks: list[ChangeCallback] = []
@@ -31,9 +32,11 @@ class EntityManager:
         self._lock = asyncio.Lock()
 
     def get(self, topic: str) -> Any | None:
+        """Get the latest payload for a topic, or None if not set."""
         return self._values.get(topic)
 
     def snapshot(self) -> dict[str, Any]:
+        """Get a snapshot of all current topic values."""
         return dict(self._values)
 
     def on_change(self, cb: ChangeCallback, *, topic: str | None = None) -> None:
@@ -54,6 +57,7 @@ class EntityManager:
         return await self.set(msg.topic, msg.payload)
 
     async def set(self, topic: str, payload: Any) -> bool:
+        """Set the latest payload for a topic and notify subscribers of changes."""
         async with self._lock:
             old = self._values.get(topic)
             if self._equal(old, payload):
@@ -64,7 +68,7 @@ class EntityManager:
         return True
 
     async def _notify(self, topic: str, new: Any, old: Any | None) -> None:
-        # global
+        """Notify all registered callbacks of a change."""
         msg = {
             "topic": topic,
             "data": new,
@@ -85,5 +89,5 @@ class EntityManager:
         """Check if two values are equal."""
         try:
             return bool(a == b)
-        except Exception:
+        except Exception:  # pylint: disable=broad-except
             return str(a) == str(b)
