@@ -61,7 +61,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes
 
     def set_filters(self) -> None:
         """Set CAN filters based on device whitelist from configuration."""
-        self._whitelist: set[int] = {
+        self._whitelist = {
             item.can_id  # type: ignore  # noqa: PGH003
             for item in self.config
             if item.type == ResourceTypes.DEVICE and hasattr(item, "can_id")
