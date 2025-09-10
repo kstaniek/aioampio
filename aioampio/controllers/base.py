@@ -18,7 +18,6 @@ from dacite import from_dict as dataclass_from_dict
 from aioampio.controllers.events import EventCallBackType, EventType
 from aioampio.controllers.utils import generate_multican_payload, get_entity_index
 
-# from aioampio.util import dataclass_from_dict
 from aioampio.models.device import Device
 
 from aioampio.models.resource import ResourceTypes

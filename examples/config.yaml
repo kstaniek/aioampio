@@ -13,38 +13,159 @@ floors:
         name: Garage
 
 devices:
-  - can_id: 0x6f41
-    name: MSENS Garage
-    model: 44
-    pcb: 3
-    sw_version: 63
-    area: Garage
-    sensors:
-      - id: temperature1
-        name: Temperatura
-        device_class: temperature
-        states: temperature.1
-      - id: humidity1
-        name: Wilgotność
-        states: s16b10000.1
-        device_class: humidity
-      - id: aap1
-        name: Ciśnienie bezwzględne
-        states: s16b10000.2
-        device_class: atmospheric_pressure
-      - id: noise1
-        name: Hałas
-        states: s16b10000.3
-        device_class: sound_pressure
-      - id: brightness1
-        name: Jasność
-        states: s16b10000.4
-        device_class: illuminance
-      - id: aqi1
-        name: Jakość powietrza
-        states: s16b10000.5
-        device_class: aqi
-      - id: rap1
-        name: Ciśnienie względne
-        states: s16b10000.6
-        device_class: atmospheric_pressure
+  - can_id: 0x1879
+    name: Salon
+    model: 12
+    pcb: 6
+    sw_version: 10010
+    area: Serwerownia
+    lights:
+      - id: light1
+        name: LED Salon
+        states: [rgb.1, binout.25, binout.26, binout.27, binout.28]
+        area: Salon
+
+  - can_id: 0x1885
+    name: LED
+    model: 26
+    pcb: 2
+    sw_version: 10119
+    area: Serwerownia
+    lights:
+      - id: light1
+        name: Lustro
+        states: [aout.1, binout.25]
+        area: Duża łazienka
+      - id: light2
+        name: Lustro
+        states: [aout.2, binout.26]
+        area: Mała łazienka
+      - id: light3
+        name: Lustro
+        states: [aout.3, binout.27]
+        area: Toaleta
+
+  - can_id: 0x1a1e
+    name: Oświetlenie 1
+    model: 4
+    pcb: 5
+    sw_version: 10400
+    area: Serwerownia
+    binary_sensors:
+      - id: input1
+        name: Mała łazienka L
+        states: [ binout.1 ]
+        area: Mała łazienka
+      - id: input2
+        name: Mała łazienka P
+        states: [ binout.2 ]
+        area: Mała łazienka
+    lights:
+      - id: light1
+        name: Komoda
+        states: [binout.25]
+        area: Salon
+
+  - can_id: 0x19c7
+    name: Ściemniacz 1
+    model: 5
+    pcb: 2
+    sw_version: 10013
+    area: Serwerownia
+    lights:
+      - id: light2
+        name: Światło w siłowni
+        states: [aout.2, binout.26]
+        area: Siłownia
+      - id: light3
+        name: Korytarz
+        states: [aout.3, binout.27]
+        area: Korytarz
+      - id: light4
+        name: Garderoba siłownia
+        states: [aout.4, binout.28]
+        area: Siłownia
+      - id: light5
+        name: Garderoba w sypialni
+        states: [aout.5, binout.29]
+        area: Sypialnia
+      - id: light7
+        name: Taras
+        states: [aout.7, binout.31]
+        area: Ogród
+      - id: light8
+        name: Stół jadalny
+        states: [aout.8, binout.32]
+        area: Kuchnia
+
+  - can_id: 0x1e5d
+    name: Salon 12 Przedpokój 04
+    model: 17
+    pcb: 8
+    sw_version: 11701
+    area: Serwerownia
+    lights:
+      - id: light1
+        name: MLED Salon 01
+        states: [aout.1, binout.25]
+        area: Salon
+      - id: light2
+        name: MLED Salon 02
+        states: [aout.2, binout.26]
+        area: Salon
+      - id: light3
+        name: MLED Salon 03
+        states: [aout.3, binout.27]
+        area: Salon
+      - id: light4
+        name: MLED Salon 04
+        states: [aout.4, binout.28]
+        area: Salon
+      - id: light5
+        name: MLED Salon 05
+        states: [aout.5, binout.29]
+        area: Salon
+      - id: light6
+        name: MLED Salon 06
+        states: [aout.6, binout.30]
+        area: Salon
+      - id: light7
+        name: MLED Salon 07
+        states: [aout.7, binout.31]
+        area: Salon
+      - id: light8
+        name: MLED Salon 08
+        states: [aout.8, binout.32]
+        area: Salon
+      - id: light9
+        name: MLED Salon 09
+        states: [aout.9, binout.33]
+        area: Salon
+      - id: light10
+        name: MLED Salon 10
+        states: [aout.10, binout.34]
+        area: Salon
+      - id: light11
+        name: MLED Salon 11
+        states: [aout.11, binout.35]
+        area: Salon
+      - id: light12
+        name: MLED Salon 12
+        states: [aout.12, binout.36]
+        area: Salon
+      - id: light13
+        name: MLED Przedpokój 01
+        states: [aout.13, binout.37]
+        area: Przedpokój
+      - id: light14
+        name: MLED Przedpokój 02
+        states: [aout.14, binout.38]
+        area: Przedpokój
+      - id: light15
+        name: MLED Przedpokój 03
+        states: [aout.15, binout.39]
+        area: Przedpokój
+      - id: light16
+        name: MLED Przedpokój 04
+        states: [aout.16, binout.40]
+        area: Przedpokój

@@ -1,8 +1,7 @@
 """This is the configuration module for the Ampio integration."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from collections.abc import Iterator
-import yaml
 
 from dacite import from_dict as dataclass_from_dict
 
@@ -19,7 +18,6 @@ from aioampio.models.switch import Switch
 from aioampio.models.text import Text
 from aioampio.models.binary_sensor import BinarySensor
 from aioampio.models.valve import Valve
-from aioampio.util import read_text
 from aioampio.codec.registry import registry
 
 
@@ -51,14 +49,9 @@ class AmpioConfig:
         self._logger = bridge.logger.getChild("Config")
         self._items: dict[str, AmpioResource] = {}
 
-    async def initialize(self, cfg_path: str) -> None:
+    async def initialize(self, cfg: dict[str, Any]) -> None:
         """Initialize the configuration."""
-        conf = await read_text(cfg_path)
-        data = yaml.safe_load(conf)
-
-        self._config = Config.model_validate(data)
-        self._logger.info("Loaded configuration from %s", cfg_path)
-
+        self._config = Config.model_validate(cfg)
         await registry().load_modules([c.module for c in self._config.codecs])
         self._process_config()
 

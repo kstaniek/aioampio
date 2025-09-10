@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from typing import Any
 
 from caneth import CANFrame
 
@@ -30,15 +31,15 @@ from .models.resource import ResourceTypes
 class AmpioBridge:  # pylint: disable=too-many-instance-attributes
     """Ampio Bridge main class."""
 
-    def __init__(self, cfg_path: str, host: str, port: int) -> None:
+    def __init__(self, cfg: dict[str, Any], host: str, port: int) -> None:
         """Initialize the Ampio Bridge."""
+        self._ampio_cfg = cfg
         self._host = host
         self._port = port
-        self._cfg_path = cfg_path
 
         self.logger = logging.getLogger(f"{__package__}[{self._host}]")
 
-        self.config = AmpioConfig(self)
+        self._config = AmpioConfig(self)
 
         self.transport = CanethTransport(self._host, self._port)
         self.entities = EntityManager(self)
@@ -63,7 +64,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes
         """Set CAN filters based on device whitelist from configuration."""
         self._whitelist = {
             item.can_id  # type: ignore  # noqa: PGH003
-            for item in self.config
+            for item in self._config
             if item.type == ResourceTypes.DEVICE and hasattr(item, "can_id")
         }
         if self._whitelist:
@@ -76,13 +77,13 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes
 
     def initialize_outputs(self) -> None:
         """Initialize output handlers based on configuration."""
-        for out in self.config.outputs:
+        for out in self._config.outputs:
             if out.type == "stdout":
                 self._outputs.append(StdoutOutput(fmt=out.format))
 
     async def initialize(self) -> None:
         """Initialize the bridge."""
-        await self.config.initialize(self._cfg_path)
+        await self._config.initialize(self._ampio_cfg)
         self.set_filters()
         self.initialize_outputs()
 
@@ -184,3 +185,8 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes
     def climates(self) -> ClimatesController:
         """Return the climates controller."""
         return self._climates
+
+    @property
+    def config(self) -> AmpioConfig:
+        """Return the current configuration."""
+        return self._config
