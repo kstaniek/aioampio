@@ -125,6 +125,8 @@ class PlatformCfg(BaseModel):
 class DeviceCfg(BaseModel):
     """Configuration model for devices."""
 
+    model_config = ConfigDict(extra="forbid")
+
     can_id: int = Field(0, ge=0, le=0x1FFFFFFF)
     name: str
     model: DeviceType
@@ -146,6 +148,8 @@ class DeviceCfg(BaseModel):
 class SensorCfg(PlatformCfg):
     """Configuration model for sensors."""
 
+    model_config = ConfigDict(extra="forbid")
+
     platform: str = "sensor"
     device_class: str | None = None
 
@@ -154,12 +158,52 @@ class SensorCfg(PlatformCfg):
     def validate_device_class(cls, value: str | None) -> str | None:
         """Validate device class."""
         allowed_device_classes = {
+            "aqi",
             "atmospheric_pressure",
-            "temperature",
+            "battery",
+            "carbon_dioxide",
+            "carbon_monoxide",
+            "current",
+            "data_rate",
+            "data_size",
+            "date",
+            "distance",
+            "duration",
+            "energy",
+            "energy_storage",
+            "frequency",
+            "gas",
             "humidity",
             "illuminance",
-            "aqi",
+            "irradiance",
+            "moisture",
+            "monetary",
+            "nitrogen_dioxide",
+            "nitrogen_monoxide",
+            "nitrous_oxide",
+            "ozone",
+            "ph",
+            "pm1",
+            "pm10",
+            "pm25",
+            "power",
+            "power_factor",
+            "precipitation",
+            "precipitation_intensity",
+            "pressure",
+            "reactive_power",
+            "signal_strength",
             "sound_pressure",
+            "speed",
+            "sulphur_dioxide",
+            "temperature",
+            "timestamp",
+            "volatile_organic_compounds",
+            "voltage",
+            "volume",
+            "water",
+            "weight",
+            "wind_speed",
         }
         if value is not None and value not in allowed_device_classes:
             raise ValueError(
@@ -170,6 +214,8 @@ class SensorCfg(PlatformCfg):
 
 class LightCfg(PlatformCfg):
     """Configuration model for lights."""
+
+    model_config = ConfigDict(extra="forbid")
 
     platform: str = "light"
     on: bool = False
@@ -191,17 +237,23 @@ class LightCfg(PlatformCfg):
 class AlarmControlPanelCfg(PlatformCfg):
     """Configuration model for zones."""
 
+    model_config = ConfigDict(extra="forbid")
+
     platform: str = "alarm_control_panel"
 
 
 class TextCfg(PlatformCfg):
     """Configuration model for texts."""
 
+    model_config = ConfigDict(extra="forbid")
+
     platform: str = "text"
 
 
 class BinarySensorCfg(PlatformCfg):
     """Configuration model for texts."""
+
+    model_config = ConfigDict(extra="forbid")
 
     platform: str = "binary_sensor"
     device_class: str | None = None
@@ -211,14 +263,34 @@ class BinarySensorCfg(PlatformCfg):
     def validate_device_class(cls, value: str | None) -> str | None:
         """Validate device class."""
         allowed_device_classes = {
-            "motion",
-            "window",
-            "door",
-            "lock",
+            "battery",
+            "battery_charging",
             "carbon_monoxide",
-            "moisture",
+            "cold",
+            "connectivity",
+            "door",
+            "garage_door",
             "gas",
             "heat",
+            "light",
+            "lock",
+            "moisture",
+            "motion",
+            "moving",
+            "occupancy",
+            "opening",
+            "plug",
+            "power",
+            "presence",
+            "problem",
+            "running",
+            "safety",
+            "smoke",
+            "sound",
+            "tamper",
+            "update",
+            "vibration",
+            "window",
         }
         if value is not None and value not in allowed_device_classes:
             raise ValueError(
@@ -229,6 +301,8 @@ class BinarySensorCfg(PlatformCfg):
 
 class SwitchCfg(PlatformCfg):
     """Configuration model for switches."""
+
+    model_config = ConfigDict(extra="forbid")
 
     platform: str = "switch"
     on: bool = False
@@ -250,11 +324,38 @@ class SwitchCfg(PlatformCfg):
 class CoverCfg(PlatformCfg):
     """Configuration model for covers."""
 
+    model_config = ConfigDict(extra="forbid")
+
     platform: str = "cover"
+    device_class: str | None = None
+
+    @field_validator("device_class", mode="after")
+    @classmethod
+    def validate_device_class(cls, value: str | None) -> str | None:
+        """Validate device class."""
+        allowed_device_classes = {
+            "awning",
+            "blind",
+            "curtain",
+            "damper",
+            "door",
+            "garage",
+            "gate",
+            "shade",
+            "shutter",
+            "window",
+        }
+        if value is not None and value not in allowed_device_classes:
+            raise ValueError(
+                f"Invalid device_class: {value}. Must be one of: {', '.join(sorted(allowed_device_classes))}"
+            )
+        return value
 
 
 class ValveCfg(PlatformCfg):
     """Configuration model for valves."""
+
+    model_config = ConfigDict(extra="forbid")
 
     platform: str = "valve"
 
@@ -262,11 +363,15 @@ class ValveCfg(PlatformCfg):
 class ClimateCfg(PlatformCfg):
     """Configuration model for climates."""
 
+    model_config = ConfigDict(extra="forbid")
+
     platform: str = "climate"
 
 
 class AreaCfg(BaseModel):
     """Configuration model for areas."""
+
+    model_config = ConfigDict(extra="forbid")
 
     id: str
     name: str
@@ -277,6 +382,8 @@ class AreaCfg(BaseModel):
 
 class FloorCfg(BaseModel):
     """Configuration model for floors."""
+
+    model_config = ConfigDict(extra="forbid")
 
     id: str
     name: str

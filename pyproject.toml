@@ -42,7 +42,6 @@ test = [
 [project.scripts]
 aioampio = "aioampio.cli:main"
 
-
 [tool.codespell]
 ignore-words-list = "dependees,"
 
@@ -197,6 +196,9 @@ ignore = [
   "TC002", # pytest doesn't like this one...
   "PT012", # annoying with tests
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"examples/**/*.py" = ["INP001"]
 
 select = ["ALL"]
 
