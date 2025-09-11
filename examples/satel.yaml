@@ -1,0 +1,51 @@
+outputs:
+  - type: stdout
+    format: "{timestamp} {dir} id=0x{id:08X} dlc={dlc} data={data_hex} {topic} {payload}"
+
+codecs:
+  - module: aioampio.codec.ampio
+
+floors:
+  - id: floor1
+    name: Ground floor
+    areas:
+      - id: area1
+        name: Garage
+
+devices:
+  - can_id: 0x1ecc
+    name: Satel
+    model: 25
+    pcb: 6
+    sw_version: 3001
+    area: Serwerownia
+    texts:
+      - id: text1
+        name: Status ostatniej komendy
+        states:
+          - response.1
+    alarm_control_panels:
+      - id: zone1
+        name: Parter
+        states:
+          - armed.1
+          - arming.1
+          - arming_10s.1
+          - breached.1
+          - alarm.1
+      - id: zone2
+        name: Piętro
+        states:
+          - armed.2
+          - arming.2
+          - arming_10s.2
+          - breached.2
+          - alarm.2
+      - id: zone3
+        name: Zewnętrzna
+        states:
+          - armed.3
+          - arming.3
+          - arming_10s.3
+          - breached.3
+          - alarm.3

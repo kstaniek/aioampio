@@ -184,10 +184,9 @@ class AmpioResourceController[AmpioResource]:
         if device is None:
             self._logger.error("Device not found for id: %s", id)
             return
-        for _ in range(2):
-            async with self._bridge.transport.client.atomic(CTRL_CAN_ID) as a:
-                for p in generate_multican_payload(device.can_id, payload):
-                    await a.send(p)
+        async with self._bridge.transport.client.atomic(CTRL_CAN_ID) as a:
+            for p in generate_multican_payload(device.can_id, payload):
+                await a.send(p)
 
     async def _send_command(self, id: str, payload: bytes) -> None:
         """Send a command payload."""
