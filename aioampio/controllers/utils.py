@@ -43,7 +43,7 @@ def generate_multican_payload(
     payloads: list[bytes] = []
     # workaround for caneth issue with identical can_ids in multi-frame
     for _ in range(len(chunks)):
-        payloads.append(bytes())  # struct.pack(">I", can_id))
+        payloads.append(bytes())
     for idx, chunk in enumerate(chunks):
         # Each chunk is prefixed with [function_code, ifd]
         payload = struct.pack(">I", can_id) + bytes((function_code, idx & 0xFF)) + chunk
