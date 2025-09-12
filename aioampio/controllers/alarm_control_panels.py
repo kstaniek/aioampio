@@ -9,13 +9,15 @@ from .utils import get_entity_index
 SATEL_CTRL_CAN_ID = 0x0F002000
 
 
-def pin_to_satel(pin: str) -> bytes:
+def pin_to_satel(pin: str | None) -> bytes:
     """
     Convert a numeric string PIN (max 16 digits) to 8 bytes.
     Each digit is encoded in 4 bits (high nibble first digit, low nibble second, etc).
     The result is padded with 0xFF to 8 bytes if needed.
     This is a more compact implementation.
     """
+    if pin is None or len(pin) == 0:
+        raise ValueError("PIN cannot be empty.")
     if not (pin.isdigit() and len(pin) <= 16):
         raise ValueError("PIN must be a numeric string up to 16 digits.")
     # Convert pin digits to nibbles and pad with 0xF

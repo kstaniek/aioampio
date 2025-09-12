@@ -41,8 +41,9 @@ def generate_multican_payload(
 
     function_code = 0x16
     payloads: list[bytes] = []
-    # workaround for caneth issue with identical can_ids in multi-frame
-    for _ in range(len(chunks)):
+    # Pre-fill with empty frames to address the
+    # WaveShare CAN issue with missing first frames
+    for i in range(6):
         payloads.append(bytes())
     for idx, chunk in enumerate(chunks):
         # Each chunk is prefixed with [function_code, ifd]
