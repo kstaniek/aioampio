@@ -3,7 +3,14 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import runtime_checkable, Protocol, Any
-from caneth import CANFrame
+
+
+@dataclass(frozen=True)
+class CANFrame:
+    """Class representing a CAN frame."""
+
+    can_id: int
+    data: memoryview[bytes | bytearray]
 
 
 @dataclass(frozen=True)

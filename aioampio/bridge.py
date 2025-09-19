@@ -1,10 +1,13 @@
 """Ampio Bridge."""
 
 import asyncio
+from contextlib import suppress
 import logging
+import random
 from typing import Any
 
-from caneth import CANFrame
+
+import can
 
 from aioampio.config import AmpioConfig
 from aioampio.controllers.alarm_control_panels import AlarmControlPanelsController
@@ -17,15 +20,16 @@ from aioampio.controllers.switch import SwitchesController
 from aioampio.controllers.text import TextsController
 from aioampio.controllers.floors import FloorsController
 from aioampio.controllers.valves import ValvesController
-from aioampio.outputs.stdout import StdoutOutput
 
 from .controllers.lights import LightsController
 from .controllers.devices import DevicesController
 
 from .codec.registry import registry
+from .codec.base import CANFrame
 from .entity_manager import EntityManager
-from .transport import CanethTransport
-from .models.resource import ResourceTypes
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class AmpioBridge:  # pylint: disable=too-many-instance-attributes
@@ -41,7 +45,9 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes
 
         self._config = AmpioConfig(self)
 
-        self.transport = CanethTransport(self._host, self._port)
+        self._reconnect_initial = 0.5
+        self._reconnect_max = 30.0
+
         self.entities = EntityManager(self)
 
         self._devices = DevicesController(self)
@@ -57,35 +63,30 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes
         self._valves = ValvesController(self)
         self._climates = ClimatesController(self)
 
-        self._outputs: list[StdoutOutput] = []
         self._whitelist: set[int] = set()
 
-    def set_filters(self) -> None:
-        """Set CAN filters based on device whitelist from configuration."""
-        self._whitelist = {
-            item.can_id  # type: ignore  # noqa: PGH003
-            for item in self._config
-            if item.type == ResourceTypes.DEVICE and hasattr(item, "can_id")
-        }
-        if self._whitelist:
-            # filters = [(can_id, 0xFE, None) for can_id in self._whitelist]
-            filters = [(can_id, None, None) for can_id in self._whitelist]
-            self.transport.set_filters(filters)
-            self.logger.info(
-                "Device whitelist applied for %i devices", len(self._whitelist)
-            )
+        self._transport: asyncio.Task[None] | None = None
+        self._bus: can.BusABC | None = None
 
-    def initialize_outputs(self) -> None:
-        """Initialize output handlers based on configuration."""
-        for out in self._config.outputs:
-            if out.type == "stdout":
-                self._outputs.append(StdoutOutput(fmt=out.format))
+    # def set_filters(self) -> None:
+    #     """Set CAN filters based on device whitelist from configuration."""
+    #     self._whitelist = {
+    #         item.can_id  # type: ignore  # noqa: PGH003
+    #         for item in self._config
+    #         if item.type == ResourceTypes.DEVICE and hasattr(item, "can_id")
+    #     }
+    #     if self._whitelist:
+    #         # filters = [(can_id, 0xFE, None) for can_id in self._whitelist]
+    #         filters = [(can_id, None, None) for can_id in self._whitelist]
+    #         self.transport.set_filters(filters)
+    #         self.logger.info(
+    #             "Device whitelist applied for %i devices", len(self._whitelist)
+    #         )
 
     async def initialize(self) -> None:
         """Initialize the bridge."""
         await self._config.initialize(self._ampio_cfg)
-        self.set_filters()
-        self.initialize_outputs()
+        # self.set_filters()
 
         await asyncio.gather(
             self._floors.initialize(),
@@ -104,27 +105,107 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes
 
     async def start(self) -> None:
         """Start the bridge."""
-        self.transport.on_frame(self._on_frame)
-        await self.transport.start()
+        self._transport = asyncio.create_task(self._run(self._host, self._port))
+        # await self._run(self._host, self._port)
+        _LOGGER.info("Bridge started")
 
     async def stop(self) -> None:
         """Stop the bridge."""
-        await self.transport.close()
+        if self._transport is None:
+            return
+        self._transport.cancel()
 
-    async def _on_frame(self, frame: CANFrame) -> None:
+        with suppress(asyncio.CancelledError):
+            await self._transport
+            self._transport = None
+
+    def _next_backoff(self, attempt: int) -> float:
+        """Calculate the next backoff delay."""
+        upper = min(self._reconnect_max, self._reconnect_initial * (2**attempt))
+        return random.uniform(0.0, upper)
+
+    async def _run(self, host: str, port: int, channel: str = "can0") -> None:
+        """Run the transport."""
+        stop = asyncio.Event()
+        attempt = 0
+
+        async def reader_loop(bus: can.BusABC) -> None:
+            """Read messages from the CAN bus."""
+            reader = can.AsyncBufferedReader()
+            listeners: list[can.notifier.MessageRecipient] = [
+                reader,
+            ]
+            try:
+                with can.Notifier(bus, listeners):
+                    while True:
+                        msg = await asyncio.wait_for(reader.get_message(), 10.0)
+                        if msg is None:
+                            return
+                        await self._on_frame(msg)  # type: ignore
+            except asyncio.TimeoutError:
+                _LOGGER.warning("No CAN messages received in the last 10 seconds")
+
+        while not stop.is_set():
+            try:
+                _LOGGER.info("Connecting to can at %s:%d", host, port)
+                self._bus = bus = can.interface.Bus(
+                    interface="waveshare",
+                    host=host,
+                    port=port,
+                    channel=channel,
+                    receive_own_messages=False,
+                    tcp_tune=True,
+                    fd=False,
+                )
+                _LOGGER.info("Connected")
+                await reader_loop(bus)
+            except Exception as exc:  # pylint: disable=broad-except
+                _LOGGER.error("Error in CAN bus loop: %s", exc)
+            finally:
+                with suppress(Exception):
+                    bus.shutdown()
+            delay = self._next_backoff(attempt)
+            attempt += 1
+            _LOGGER.info("Reconnecting to CAN bus in %.1f seconds", delay)
+            await asyncio.sleep(delay)
+
+    async def _on_frame(self, msg: can.Message) -> None:
         """Handle incoming CAN frame."""
+        if msg.is_extended_id is False:
+            self.logger.warning("Ignoring non-extended CAN frame: %s", msg)
+            return
+        if msg.is_remote_frame:
+            self.logger.warning("Ignoring remote CAN frame: %s", msg)
+            return
+        if msg.dlc != len(msg.data):
+            self.logger.warning("Ignoring CAN frame with invalid DLC: %s", msg)
+            return
+        frame = CANFrame(can_id=msg.arbitration_id, data=memoryview(msg.data))
         msgs = registry().decode(frame)
         if msgs:
             # store/update entity state
-            for msg in msgs:
-                await self.entities.apply_message(msg)
-            # emit outputs for visibility
-            for out in self._outputs:
-                for msg in msgs:
-                    out.emit_msg(msg)
-        else:
-            for out in self._outputs:
-                out.emit_raw(frame)
+            for m in msgs:
+                await self.entities.apply_message(m)
+
+    async def send(self, can_id: int, data: bytes | memoryview) -> None:
+        """Send a CAN frame."""
+        print("TX", data.hex())
+
+        if self._transport is None:
+            return
+        if self._bus is None:
+            return
+        msg = can.Message(
+            arbitration_id=can_id,
+            data=data,
+            is_extended_id=True,
+            is_fd=False,
+        )
+        try:
+            self._bus.send(msg, timeout=1.0)
+        except can.CanError as e:
+            self.logger.error("TX failed; dropping frame id=0x%X: %s", can_id, e)
+        # await self.transport.send(frame.can_id, frame.data)  # type: ignore
 
     @property
     def floors(self) -> FloorsController:
