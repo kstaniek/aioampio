@@ -27,7 +27,7 @@ from .controllers.devices import DevicesController
 
 from .codec.registry import registry
 from .codec.base import CANFrame
-from .entity_manager import EntityManager
+from .state_store import StateStore
 from .helpers.rx_reader import BoundedAsyncCanReader
 
 
@@ -50,7 +50,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes
         self._reconnect_initial = 0.5
         self._reconnect_max = 30.0
 
-        self.entities = EntityManager(self)
+        self.state_store = StateStore(self)
 
         self._devices = DevicesController(self)
         self._lights = LightsController(self)
@@ -340,7 +340,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes
         if not msgs:
             return
         for m in msgs:
-            await self.entities.apply_message(m)
+            await self.state_store.apply_message(m)
 
     def _apply_filters(self) -> None:
         """Apply CAN ID whitelist as hardware/driver filters."""

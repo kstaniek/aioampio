@@ -1,0 +1,150 @@
+"""Entity Manager for managing Ampio entities."""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+import math
+from typing import Any, TYPE_CHECKING, Awaitable, Callable
+
+from .codec.base import AmpioMessage
+from .controllers.events import EventType
+
+if TYPE_CHECKING:
+    from aioampio.bridge import AmpioBridge
+
+ChangeCallback = Callable[[EventType, dict | None], Awaitable[None] | None]
+
+
+class EntityManager:
+    """Stores latest payload per topic and notifies subscribers of changes.
+
+    - Key: `topic` (str)
+    - Value: arbitrary JSON-like payload
+    - Callbacks fire only when the payload actually changes
+    - Notification order is preserved per topic (sequential callbacks)
+    """
+
+    def __init__(self, bridge: AmpioBridge) -> None:
+        """Initialize the entity manager."""
+        self._bridge = bridge
+        self._values: dict[str, Any] = {}
+        self._callbacks: list[ChangeCallback] = []
+        self._callbacks_by_topic: dict[str, list[ChangeCallback]] = {}
+        self._lock = asyncio.Lock()
+
+    # --------------------------- state access ---------------------------
+
+    def get(self, topic: str) -> Any | None:
+        """Get the latest payload for a topic, or None if not set."""
+        return self._values.get(topic)
+
+    def snapshot(self) -> dict[str, Any]:
+        """Get a shallow snapshot of all current topic values."""
+        return dict(self._values)
+
+    # --------------------------- subscriptions --------------------------
+
+    def on_change(
+        self, cb: ChangeCallback, *, topic: str | None = None
+    ) -> Callable[[], None]:
+        """Register a callback to be called when an entity changes.
+
+        If `topic` is provided, the callback will only be called for changes to that topic.
+
+        Returns an `unsubscribe()` function.
+        """
+        if topic is None:
+            lst = self._callbacks
+        else:
+            lst = self._callbacks_by_topic.setdefault(topic, [])
+
+        # avoid duplicates
+        if cb not in lst:
+            lst.append(cb)
+
+        def unsubscribe() -> None:
+            try:
+                if cb in self._callbacks:
+                    self._callbacks.remove(cb)
+            except ValueError:
+                pass
+            try:
+                if topic is not None:
+                    lst_topic = self._callbacks_by_topic.get(topic)
+                    if lst_topic and cb in lst_topic:
+                        lst_topic.remove(cb)
+                        if not lst_topic:
+                            self._callbacks_by_topic.pop(topic, None)
+            except ValueError:
+                pass
+
+        return unsubscribe
+
+    # --------------------------- mutation ------------------------------
+
+    async def apply_message(self, msg: AmpioMessage) -> bool:
+        """Store the latest payload for a topic and notify subscribers of changes.
+
+        Returns True if the value changed, False otherwise.
+        """
+        return await self.set(msg.topic, msg.payload)
+
+    async def set(self, topic: str, payload: Any) -> bool:
+        """Set the latest payload for a topic and notify subscribers of changes."""
+        async with self._lock:
+            old = self._values.get(topic)
+            if self._equal(old, payload):
+                return False
+            self._values[topic] = payload
+
+        # Fire callbacks outside the lock to avoid blocking other writers.
+        await self._notify(topic, payload, old)
+        return True
+
+    # --------------------------- internals -----------------------------
+
+    async def _notify(self, topic: str, new: Any, old: Any | None) -> None:
+        """Notify all registered callbacks of a change (sequential, fault-tolerant)."""
+        msg = {
+            "topic": topic,
+            "data": new,
+            "previous": old,
+        }
+
+        # Snapshot lists to allow unsubscribe during iteration
+        global_cbs = list(self._callbacks)
+        topic_cbs = list(self._callbacks_by_topic.get(topic, []))
+
+        # keep ordering stable: global first, then topic-specific
+        for cb in (*global_cbs, *topic_cbs):
+            try:
+                res = cb(EventType.ENTITY_UPDATED, msg)
+                if inspect.isawaitable(res):
+                    await res
+            except asyncio.CancelledError:
+                # allow shutdown to remain responsive
+                raise
+            except Exception:
+                # don’t let a single bad callback kill the RX worker
+                self._bridge.logger.exception(
+                    "Entity callback failed for topic %s", topic
+                )
+
+    @staticmethod
+    def _equal(a: Any, b: Any) -> bool:
+        """Check if two values are equal, with a few practical edge cases."""
+        if a is b:
+            return True
+        # bytes vs bytearray etc.
+        if isinstance(a, (bytes, bytearray)) and isinstance(b, (bytes, bytearray)):
+            return bytes(a) == bytes(b)
+        # floats: treat NaN as equal to NaN (state semantics)
+        if isinstance(a, float) and isinstance(b, float):
+            if math.isnan(a) and math.isnan(b):
+                return True
+        # fallback to normal equality
+        try:
+            return bool(a == b)
+        except Exception:  # pylint: disable=broad-except
+            return False

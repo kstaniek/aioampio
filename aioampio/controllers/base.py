@@ -147,7 +147,7 @@ class AmpioResourceController[AmpioResource]:
             for topic in evt_data.get("states", []):
                 full_topic = f"{evt_data['owner']}.{topic}"
                 self._topics[full_topic] = item_id
-                self._bridge.entities.on_change(self._handle_event, topic=full_topic)
+                self._bridge.state_store.on_change(self._handle_event, topic=full_topic)
 
         elif evt_type == EventType.RESOURCE_DELETED:
             cur_item = self._items.pop(item_id, evt_data)
