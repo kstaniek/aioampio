@@ -151,7 +151,11 @@ class StateFrameRouter(Codec):
             except ValueError:
                 # checking because wanted to log only if new
                 if ftype not in _unknown_state_decoder:
-                    self._logger.warning("Unknown state type: %02X", ftype)
+                    self._logger.warning(
+                        "Unknown state type: can_id=0x%08X ftype=0x%02X",
+                        frame.can_id,
+                        ftype,
+                    )
                     _unknown_state_decoder.add(ftype)
 
         return None

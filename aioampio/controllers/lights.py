@@ -21,7 +21,6 @@ class LightsController(AmpioResourceController[type[Light]]):
         color: tuple[int, int, int, int] | None = None,
     ) -> None:
         """Set supported features to light resource."""
-        print("Setting state", id, on, brightness, color)
         idx = self._get_entity_index_or_log(id)
         if idx is None:
             return
@@ -35,7 +34,7 @@ class LightsController(AmpioResourceController[type[Light]]):
         if device is None:
             self._logger.error("Device for entity %s not found", id)
             return
-        print("Setting state", id, on, brightness, color)
+
         match device.model:
             case DeviceType.MRGBW:
                 if brightness is not None:
