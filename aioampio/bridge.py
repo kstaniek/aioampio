@@ -249,7 +249,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes
                                         self._reconnect_now.set()
                                         continue
                                 self.logger.debug(
-                                    "No CAN messages in the last 10 seconds"
+                                    "No CAN messages in the last %.1f seconds", READ_TIMEOUT_S
                                 )
                                 continue
                             # Stage-2 bounded queue (processing)
