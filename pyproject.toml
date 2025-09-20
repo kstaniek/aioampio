@@ -15,6 +15,7 @@ classifiers = [
 ]
 dependencies = [
   "python-can",
+  "can-waveshare",
   "pydantic>=2.6",
   "dacite",
 ]
