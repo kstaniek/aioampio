@@ -10,6 +10,15 @@ categories:
     labels:
       - "dependencies"
       - "ci"
+  - title: '🚀 Features'
+    labels:
+      - 'feature'
+      - 'new-feature'
+  - title: '🐛 Bug Fixes'
+    labels:
+      - 'fix'
+      - 'bugfix'
+      - 'bug'
 template: |
   ## What’s Changed
 
