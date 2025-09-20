@@ -53,15 +53,15 @@ class StateStore:
             lst.append(cb)
 
         def unsubscribe() -> None:
-            if cb in self._callbacks:
-                self._callbacks.remove(cb)
-            if topic is not None:
+            if topic is None:
+                if cb in self._callbacks:
+                    self._callbacks.remove(cb)
+            else:
                 lst_t = self._callbacks_by_topic.get(topic)
                 if lst_t and cb in lst_t:
                     lst_t.remove(cb)
                     if not lst_t:
                         self._callbacks_by_topic.pop(topic, None)
-
         return unsubscribe
 
     async def apply_message(self, msg: AmpioMessage) -> bool:

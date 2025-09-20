@@ -10,7 +10,7 @@ class CANFrame:
     """Class representing a CAN frame."""
 
     can_id: int
-    data: memoryview[bytes | bytearray]
+    data: memoryview
 
 
 @dataclass(frozen=True)
