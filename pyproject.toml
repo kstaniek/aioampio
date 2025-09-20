@@ -14,7 +14,8 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-  "caneth",
+  "python-can",
+  "can-waveshare",
   "pydantic>=2.6",
   "dacite",
 ]

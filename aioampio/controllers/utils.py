@@ -43,8 +43,8 @@ def generate_multican_payload(
     payloads: list[bytes] = []
     # Pre-fill with empty frames to address the
     # WaveShare CAN issue with missing first frames
-    for i in range(6):
-        payloads.append(bytes())
+    # for i in range(6):
+    #     payloads.append(bytes())
     for idx, chunk in enumerate(chunks):
         # Each chunk is prefixed with [function_code, ifd]
         payload = struct.pack(">I", can_id) + bytes((function_code, idx & 0xFF)) + chunk

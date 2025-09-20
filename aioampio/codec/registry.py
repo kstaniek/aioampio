@@ -5,9 +5,7 @@ from __future__ import annotations
 import asyncio
 from importlib import import_module
 
-from caneth import CANFrame
-
-from .base import Codec, AmpioMessage
+from .base import Codec, AmpioMessage, CANFrame
 
 
 class CodecRegistry:

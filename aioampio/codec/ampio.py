@@ -5,9 +5,8 @@ import logging
 from enum import Enum, unique
 from collections.abc import Callable
 
-from caneth import CANFrame
 
-from .base import AmpioMessage, Codec
+from .base import AmpioMessage, Codec, CANFrame
 from .registry import register_codec
 
 log = logging.getLogger(__name__)
@@ -134,7 +133,7 @@ class StateFrameRouter(Codec):
         self._logger = logging.getLogger(__name__)
 
     def decode(self, frame: CANFrame) -> list[AmpioMessage] | None:
-        if frame.dlc == 3 and frame.data[0] == _STATE_SATEL_FLAG:
+        if len(frame.data) == 3 and frame.data[0] == _STATE_SATEL_FLAG:
             # Handle SATEL specific decoding
             try:
                 return _decode_satel_status(frame)
@@ -143,7 +142,7 @@ class StateFrameRouter(Codec):
                     "Unknown SATEL frame received: %s", frame.data.hex()
                 )
 
-        if frame.dlc >= 2 and frame.data[0] == _STATE_FLAG:
+        if len(frame.data) >= 2 and frame.data[0] == _STATE_FLAG:
             ftype = frame.data[1]
             try:
                 decoder = _state_decoders.get(StateType(ftype))
@@ -152,14 +151,18 @@ class StateFrameRouter(Codec):
             except ValueError:
                 # checking because wanted to log only if new
                 if ftype not in _unknown_state_decoder:
-                    self._logger.warning("Unknown state type: %02X", ftype)
+                    self._logger.warning(
+                        "Unknown state type: can_id=0x%08X ftype=0x%02X",
+                        frame.can_id,
+                        ftype,
+                    )
                     _unknown_state_decoder.add(ftype)
 
         return None
 
 
 def _decode_satel_status(frame: CANFrame) -> list[AmpioMessage] | None:
-    if frame.dlc >= 3:
+    if len(frame.data) >= 3:
         if frame.data[1] != 0xEF:  # satel status
             return None
         status = frame.data[2]
@@ -176,7 +179,7 @@ def _decode_satel_status(frame: CANFrame) -> list[AmpioMessage] | None:
 
 @register_state_decoder(StateType.DATETIME)  # DateTime
 def _decode_datetime(frame: CANFrame) -> list[AmpioMessage] | None:
-    if frame.dlc == 8:
+    if len(frame.data) == 8:
         d = frame.data
         year = 2000 + d[2]
         month = d[3] & 0x0F
@@ -205,7 +208,7 @@ def _decode_datetime(frame: CANFrame) -> list[AmpioMessage] | None:
 
 @register_state_decoder(StateType.DIAGNOSTICS)  # Diagnostics
 def _decode_diagnostics(frame: CANFrame) -> list[AmpioMessage] | None:
-    if frame.dlc == 4:
+    if len(frame.data) == 4:
         voltage = round(float(frame.data[2] << 1) / 10, 1)
         temperature = frame.data[3] - 100
         return [
@@ -220,7 +223,7 @@ def _decode_diagnostics(frame: CANFrame) -> list[AmpioMessage] | None:
 
 @register_state_decoder(StateType.TEMPERATURE)  # Temperature
 def _decode_temperature(frame: CANFrame) -> list[AmpioMessage] | None:
-    if frame.dlc >= 3:
+    if len(frame.data) >= 3:
         high = frame.data[2]
         low = frame.data[3]
         raw_temp = ((low << 8) | high) - 1000
@@ -237,7 +240,7 @@ def _decode_temperature(frame: CANFrame) -> list[AmpioMessage] | None:
 
 @register_state_decoder(StateType.RGB)  # RGB
 def _decode_rgb(frame: CANFrame) -> list[AmpioMessage] | None:
-    if frame.dlc >= 6:
+    if len(frame.data) >= 6:
         r = frame.data[2]
         g = frame.data[3]
         b = frame.data[4]
@@ -259,7 +262,7 @@ def _decode_signed16b_factory(
         msg: list[AmpioMessage] = []
         for channel in range(start_channel, end_channel + 1):
             idx = 2 + 2 * (channel - start_channel)
-            if 0 <= idx < frame.dlc:
+            if 0 <= idx < len(frame.data):
                 low = int(frame.data[idx])
                 high = int(frame.data[idx + 1])
                 value = (high << 8) | low
@@ -287,7 +290,7 @@ def _decode_analog_output_factory(
         msg: list[AmpioMessage] = []
         for channel in range(start_channel, end_channel + 1):
             idx = 2 + (channel - start_channel)
-            if 0 <= idx < frame.dlc:
+            if 0 <= idx < len(frame.data):
                 value = int(frame.data[idx])
                 msg.append(
                     AmpioMessage(
@@ -313,7 +316,7 @@ def _decode_signed16b10000_factory(
         msg: list[AmpioMessage] = []
         for channel in range(start_channel, end_channel + 1):
             idx = 2 + 2 * (channel - start_channel)
-            if 0 <= idx < frame.dlc:
+            if 0 <= idx < len(frame.data):
                 low = int(frame.data[idx])
                 high = int(frame.data[idx + 1])
                 data = (high << 8) | low
@@ -339,11 +342,11 @@ def _decode_satel_binary_factory(
     start_channel: int, end_channel: int, name: str
 ) -> Callable[[CANFrame], list[AmpioMessage] | None]:
     def decoder(frame: CANFrame) -> list[AmpioMessage] | None:
-        if frame.dlc > 2:
+        if len(frame.data) > 2:
             msg: list[AmpioMessage] = []
             for i, channel in enumerate(range(start_channel, end_channel + 1)):
                 byte_idx = 2 + (i // 8)
-                if byte_idx >= frame.dlc:
+                if byte_idx >= len(frame.data):
                     break
                 bit_idx = i % 8
                 value = bool(frame.data[byte_idx] & (1 << bit_idx))
