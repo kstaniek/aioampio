@@ -83,6 +83,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes
         self._rx_enqueued = 0  # into bounded reader
         self._rx_backpressure_drop = 0
         self._rx_proc_queued = 0  # into processing queue
+        self._tx_errors = 0
         self._tx_total = 0
         self._reconnects = 0
         self._last_rx_mono: float | None = None
@@ -150,7 +151,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes
     def _inc_enq(self) -> None:
         self._rx_enqueued += 1
 
-    def _start_rx_workers(self, n: int = 2) -> None:
+    def _start_rx_workers(self, n: int = 1) -> None:
         async def worker(idx: int) -> None:
             while not self._stop_event.is_set():
                 try:
@@ -306,6 +307,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes
             "rx_proc_queued": self._rx_proc_queued,  # accepted for processing
             "rx_dropped": self._rx_backpressure_drop,  # dropped at either stage
             "tx_total": self._tx_total,
+            "tx_errors": self._tx_errors,
             "rx_queue_depth": self._proc_queue.qsize(),
             "last_rx_age_s": (
                 None
@@ -380,6 +382,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes
             self._last_tx_mono = time.monotonic()
             self.logger.debug("TX id=0x%X len=%d", can_id, len(msg.data))
         except can.CanError as e:  # type: ignore[attr-defined]
+            self._tx_errors += 1
             self.logger.error("TX failed; dropping frame id=0x%X: %s", can_id, e)
             if "closed" in str(e).lower():
                 self._reconnect_now.set()
