@@ -62,6 +62,7 @@ class StateStore:
                     lst_t.remove(cb)
                     if not lst_t:
                         self._callbacks_by_topic.pop(topic, None)
+
         return unsubscribe
 
     async def apply_message(self, msg: AmpioMessage) -> bool:
