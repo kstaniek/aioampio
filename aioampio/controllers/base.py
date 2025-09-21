@@ -8,13 +8,14 @@ from contextlib import suppress
 import inspect
 import struct
 from dataclasses import asdict
-from typing import Any, Final, Protocol, TYPE_CHECKING, TypeVar
+from typing import Any, Final, Protocol, TYPE_CHECKING, TypeVar, runtime_checkable
 
 from dacite import from_dict as dataclass_from_dict
 
 from aioampio.controllers.events import EventCallBackType, EventType
 from aioampio.controllers.utils import generate_multican_payload, get_entity_index
 from aioampio.models.device import Device
+from aioampio.controllers.metrics import ControllerMetrics
 from aioampio.models.resource import ResourceTypes
 
 if TYPE_CHECKING:
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------
 
 
+@runtime_checkable
 class _Updatable(Protocol):
     """Protocol for resources that can be updated with topic data."""
 
@@ -45,7 +47,7 @@ _NOOP: Final[tuple[EventType, str | None, Any | None]] = (
 AmpioResource = TypeVar("AmpioResource", bound=_Updatable)
 
 
-class AmpioResourceController[AmpioResource]:
+class AmpioResourceController[AmpioResource](ControllerMetrics):
     """Base controller for managing Ampio entities."""
 
     item_type: ResourceTypes | None = None
@@ -53,6 +55,7 @@ class AmpioResourceController[AmpioResource]:
 
     def __init__(self, bridge: "AmpioBridge") -> None:
         """Initialize the controller."""
+        ControllerMetrics.__init__(self)
         self._bridge = bridge
         self._items: dict[str, AmpioResource] = {}
         # topic -> item_id
@@ -170,14 +173,9 @@ class AmpioResourceController[AmpioResource]:
         ]
 
     @property
-    def metrics(self) -> dict[str, int]:
-        """Lightweight controller metrics."""
-        return {
-            "items_count": len(self._items),
-            "topics_count": len(self._topics),  # <— requested metric
-            "subscriber_buckets": len(self._subscribers),
-            "subscriptions_total": sum(len(v) for v in self._subscribers.values()),
-        }
+    def metrics(self) -> dict[str, Any]:
+        """Return current controller metrics."""
+        return self.controller_metrics
 
     # ---------------------------------------------------------------------
     # Event handling
@@ -233,6 +231,7 @@ class AmpioResourceController[AmpioResource]:
         if item_id is None or cur_item is None:
             return
 
+        self._metrics_inc_event_dispatched()
         self._notify_subscribers(notify_type, item_id, cur_item)
 
     # --- Per-event helpers --------------------------------------------------
@@ -303,6 +302,7 @@ class AmpioResourceController[AmpioResource]:
         if cur_item is None:
             return _NOOP
         cur_item.update(topic, data.get("data", {}))
+        self._metrics_inc_update_applied()
         return (EventType.RESOURCE_UPDATED, owner_id, cur_item)
 
     # --- Subscriber notify --------------------------------------------------
@@ -335,7 +335,9 @@ class AmpioResourceController[AmpioResource]:
         if device is None:
             self._logger.error("Device not found for id: %s", id)
             return
-        for p in generate_multican_payload(device.can_id, payload):
+        frames = list(generate_multican_payload(device.can_id, payload))
+        self._metrics_inc_send_attempt(len(frames))
+        for p in frames:
             await self._bridge.send(CTRL_CAN_ID, data=p)
 
     async def _send_command(self, id: str, payload: bytes) -> None:
@@ -345,6 +347,7 @@ class AmpioResourceController[AmpioResource]:
             self._logger.error("Device not found for id: %s", id)
             return
 
+        self._metrics_inc_send_attempt(1)
         payload = struct.pack(">I", device.can_id) + payload
         await self._bridge.send(CTRL_CAN_ID, data=payload)
 
