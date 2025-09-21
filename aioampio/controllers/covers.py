@@ -5,7 +5,7 @@ from aioampio.models.resource import ResourceTypes
 from .base import AmpioResourceController
 
 
-class CoversController(AmpioResourceController[type[Cover]]):
+class CoversController(AmpioResourceController[Cover]):
     """Controller holding and managing Ampio resource type cover."""
 
     item_type = ResourceTypes.COVER

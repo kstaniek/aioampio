@@ -8,7 +8,7 @@ from aioampio.models.resource import ResourceTypes
 from aioampio.models.floor import Floor
 
 
-class FloorsController(AmpioResourceController[type[Floor]]):
+class FloorsController(AmpioResourceController[Floor]):
     """Controller for managing floors."""
 
     item_type = ResourceTypes.FLOOR

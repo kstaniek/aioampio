@@ -25,7 +25,7 @@ def pin_to_satel(pin: str | None) -> bytes:
     return bytes(((nibbles[i] << 4) | nibbles[i + 1]) for i in range(0, 16, 2))
 
 
-class AlarmControlPanelsController(AmpioResourceController[type[AlarmControlPanel]]):
+class AlarmControlPanelsController(AmpioResourceController[AlarmControlPanel]):
     """Controller for managing alarm control panels."""
 
     item_type = ResourceTypes.ALARM_CONTROL_PANEL

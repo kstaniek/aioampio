@@ -100,30 +100,36 @@ class AmpioResourceController[AmpioResource]:
     ) -> Callable[[], None]:
         """Subscribe to status changes for this resource type."""
 
-        # Normalize filters to tuples
-        def _as_tuple[T](
-            value: T | tuple[T, ...] | None, default: tuple[T, ...]
-        ) -> tuple[T, ...]:
-            if value is None:
-                return default
-            return value if isinstance(value, tuple) else (value,)
+        # Normalize id_filter to tuple; default = ALL bucket
+        if id_filter is None:
+            id_filter_t: tuple[str, ...] = (ID_FILTER_ALL,)
+        elif isinstance(id_filter, tuple):
+            id_filter_t = id_filter
+        else:
+            id_filter_t = (id_filter,)
 
-        event_filter = _as_tuple(event_filter, default=())
-        id_filter = _as_tuple(id_filter, default=(ID_FILTER_ALL,))
+        # Normalize event_filter:
+        #   None  => receive ALL events
+        #   tuple => only those events
+        if event_filter is None:
+            event_filter_t: tuple[EventType, ...] | None = None
+        elif isinstance(event_filter, tuple):
+            event_filter_t = event_filter
+        else:
+            event_filter_t = (event_filter,)
 
-        sub: EventSubscriptionType = (callback, event_filter)
-        for id_key in id_filter:
+        sub: EventSubscriptionType = (callback, event_filter_t)
+        for id_key in id_filter_t:
             self._subscribers.setdefault(id_key, []).append(sub)
 
         def unsubscribe() -> None:
-            for id_key in id_filter:
+            for id_key in id_filter_t:
                 lst = self._subscribers.get(id_key)
                 if not lst:
                     continue
                 with suppress(ValueError):
                     lst.remove(sub)
                 if not lst and id_key != ID_FILTER_ALL:
-                    # keep ALL bucket alive; trim others when empty
                     self._subscribers.pop(id_key, None)
 
         return unsubscribe
@@ -163,6 +169,16 @@ class AmpioResourceController[AmpioResource]:
             it for it in self._items.values() if getattr(it, "owner", None) == owner_id
         ]
 
+    @property
+    def metrics(self) -> dict[str, int]:
+        """Lightweight controller metrics."""
+        return {
+            "items_count": len(self._items),
+            "topics_count": len(self._topics),  # <— requested metric
+            "subscriber_buckets": len(self._subscribers),
+            "subscriptions_total": sum(len(v) for v in self._subscribers.values()),
+        }
+
     # ---------------------------------------------------------------------
     # Event handling
     # ---------------------------------------------------------------------
@@ -177,13 +193,24 @@ class AmpioResourceController[AmpioResource]:
         """Subscribe to per-entity state topics and remember unsub handles."""
         if not topics:
             return
+
+        def _on_change(evt_type: EventType, payload: dict | None) -> None:
+            coro = self._handle_event(evt_type, payload)
+            try:
+                # Async runtime present -> schedule normally
+                loop = asyncio.get_running_loop()
+                loop.create_task(coro)
+            except RuntimeError:
+                # No running loop (e.g. tests calling emit() synchronously):
+                # drive the coroutine to completion on the current loop.
+                loop = asyncio.get_event_loop()
+                loop.run_until_complete(coro)
+
         unsubs: list[Callable[[], None]] = []
         for t in topics:
             full = f"{owner}.{t}"
             self._topics[full] = item_id
-            unsubs.append(
-                self._bridge.state_store.on_change(self._handle_event, topic=full)
-            )
+            unsubs.append(self._bridge.state_store.on_change(_on_change, topic=full))
         if unsubs:
             self._unsubs.setdefault(item_id, []).extend(unsubs)
 
@@ -288,7 +315,8 @@ class AmpioResourceController[AmpioResource]:
             self._subscribers.get(ID_FILTER_ALL, [])
         )
         for callback, event_filter in subs:
-            if event_filter is not None and evt_type not in event_filter:
+            # NOTE: treat empty tuple () as "no filtering"
+            if event_filter and evt_type not in event_filter:
                 continue
             try:
                 result = callback(evt_type, cur_item)

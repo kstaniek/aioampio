@@ -5,7 +5,7 @@ from aioampio.models.text import Text
 from aioampio.models.resource import ResourceTypes
 
 
-class TextsController(AmpioResourceController[type[Text]]):
+class TextsController(AmpioResourceController[Text]):
     """Controller for managing text resources."""
 
     item_type = ResourceTypes.TEXT

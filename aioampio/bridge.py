@@ -15,12 +15,12 @@ from aioampio.codec import ampio as _ampio  # noqa: F401
 from aioampio.config import AmpioConfig
 from aioampio.controllers.alarm_control_panels import AlarmControlPanelsController
 from aioampio.controllers.areas import AreasController
-from aioampio.controllers.binary_sensor import BinarySensorsController
+from aioampio.controllers.binary_sensors import BinarySensorsController
 from aioampio.controllers.climates import ClimatesController
 from aioampio.controllers.covers import CoversController
-from aioampio.controllers.sensor import SensorsController
-from aioampio.controllers.switch import SwitchesController
-from aioampio.controllers.text import TextsController
+from aioampio.controllers.sensors import SensorsController
+from aioampio.controllers.switches import SwitchesController
+from aioampio.controllers.texts import TextsController
 from aioampio.controllers.floors import FloorsController
 from aioampio.controllers.valves import ValvesController
 

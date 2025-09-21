@@ -8,7 +8,7 @@ from aioampio.models.resource import ResourceTypes
 from aioampio.models.area import Area
 
 
-class AreasController(AmpioResourceController[type[Area]]):
+class AreasController(AmpioResourceController[Area]):
     """Controller for managing areas."""
 
     item_type = ResourceTypes.AREA
