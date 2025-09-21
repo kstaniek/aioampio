@@ -321,7 +321,6 @@ def _expect_s16b(base_index: int, length: int) -> Callable[[list], None]:
             payload = msg.payload
             assert isinstance(payload, dict)
             assert "value" in payload
-            print(payload)
             val = payload["value"]
             assert isinstance(val, (int, float))
             assert val == values[i]
