@@ -1,36 +1,48 @@
 """Base controller for managing Ampio entities."""
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import Callable, Iterator
+from contextlib import suppress
 import inspect
 import struct
-
 from dataclasses import asdict
-from typing import (
-    Any,
-    TYPE_CHECKING,
-    TypeVar,
-)
+from typing import Any, Final, Protocol, TYPE_CHECKING, TypeVar
 
 from dacite import from_dict as dataclass_from_dict
 
 from aioampio.controllers.events import EventCallBackType, EventType
 from aioampio.controllers.utils import generate_multican_payload, get_entity_index
-
 from aioampio.models.device import Device
-
 from aioampio.models.resource import ResourceTypes
-
 
 if TYPE_CHECKING:
     from aioampio.bridge import AmpioBridge
 
-EventSubscriptionType = tuple[EventCallBackType, tuple[EventType] | None]
+# ---------------------------------------------------------------------
+# Types & constants
+# ---------------------------------------------------------------------
 
-ID_FILTER_ALL = "*"
-CTRL_CAN_ID = 0x0F000000
 
-AmpioResource = TypeVar("AmpioResource")
+class _Updatable(Protocol):
+    """Protocol for resources that can be updated with topic data."""
+
+    def update(self, topic: str, data: dict) -> None:
+        """Update the resource with new data from a topic."""
+
+
+EventSubscriptionType = tuple[EventCallBackType, tuple[EventType, ...] | None]
+
+ID_FILTER_ALL: Final[str] = "*"
+CTRL_CAN_ID: Final[int] = 0x0F000000
+_NOOP: Final[tuple[EventType, str | None, Any | None]] = (
+    EventType.RESOURCE_UPDATED,
+    None,
+    None,
+)
+
+AmpioResource = TypeVar("AmpioResource", bound=_Updatable)
 
 
 class AmpioResourceController[AmpioResource]:
@@ -45,19 +57,21 @@ class AmpioResourceController[AmpioResource]:
         self._items: dict[str, AmpioResource] = {}
         # topic -> item_id
         self._topics: dict[str, str] = {}
-        self._logger = bridge.logger.getChild(self.item_type.value)  # type: ignore  # noqa: PGH003
+        self._logger = bridge.logger.getChild(self.item_type.value)  # type: ignore[arg-type]
         self._subscribers: dict[str, list[EventSubscriptionType]] = {ID_FILTER_ALL: []}
         self._initialized = False
         # item_id -> list[unsubscribe]
         self._unsubs: dict[str, list[Callable[[], None]]] = {}
 
+        # Event dispatcher
         self._dispatch: dict[
             EventType, Callable[[dict], tuple[EventType, str | None, Any | None]]
         ] = {
             EventType.RESOURCE_ADDED: self._evt_resource_added,
             EventType.RESOURCE_DELETED: self._evt_resource_deleted,
             EventType.RESOURCE_UPDATED: self._evt_resource_updated,
-            EventType.ENTITY_UPDATED: self._evt_entity_updated,  # normalized to RESOURCE_UPDATED
+            # Normalized to RESOURCE_UPDATED for notifications:
+            EventType.ENTITY_UPDATED: self._evt_entity_updated,
         }
 
     # ---------------------------------------------------------------------
@@ -79,40 +93,42 @@ class AmpioResourceController[AmpioResource]:
     def subscribe(
         self,
         callback: EventCallBackType,
-        id_filter: str | tuple[str] | None = None,
-        event_filter: EventType | tuple[EventType] | None = None,
-    ) -> Callable:
+        id_filter: str | tuple[str, ...] | None = None,
+        event_filter: EventType | tuple[EventType, ...] | None = None,
+    ) -> Callable[[], None]:
         """Subscribe to status changes for this resource type."""
-        if event_filter is not None and not isinstance(event_filter, (list, tuple)):
+        if event_filter is not None and not isinstance(event_filter, tuple):
             event_filter = (event_filter,)
 
         if id_filter is None:
             id_filter = (ID_FILTER_ALL,)
-        elif id_filter is not None and not isinstance(id_filter, (list, tuple)):
+        elif not isinstance(id_filter, tuple):
             id_filter = (id_filter,)
 
-        subscription = (callback, event_filter)
+        sub: EventSubscriptionType = (callback, event_filter)
         for id_key in id_filter:
-            self._subscribers.setdefault(id_key, []).append(subscription)
+            self._subscribers.setdefault(id_key, []).append(sub)
 
-        def unsubscribe():
-            for id_key in id_filter:
-                if id_key not in self._subscribers:
+        def unsubscribe() -> None:
+            for id_key in id_filter:  # type: ignore[assignment]
+                lst = self._subscribers.get(id_key)
+                if not lst:
                     continue
-                self._subscribers[id_key].remove(subscription)
+                with suppress(ValueError):
+                    lst.remove(sub)
+                if not lst and id_key != ID_FILTER_ALL:
+                    # keep ALL bucket alive; trim others when empty
+                    self._subscribers.pop(id_key, None)
 
         return unsubscribe
 
     def get_device(self, id: str) -> Device | None:
         """Return the device associated with the given resource."""
-        if self.item_type == ResourceTypes.DEVICE:
-            item = self.get(id)
-            return item if isinstance(item, Device) else None
         item = self.get(id)
+        if self.item_type == ResourceTypes.DEVICE:
+            return item if isinstance(item, Device) else None
         owner = getattr(item, "owner", None) if item is not None else None
-        if not owner:
-            return None
-        dev = self._bridge.devices.get(owner)
+        dev = self._bridge.devices.get(owner) if owner else None
         return dev if isinstance(dev, Device) else None
 
     def get(self, id: str, default: Any = None) -> AmpioResource | None:
@@ -134,6 +150,26 @@ class AmpioResourceController[AmpioResource]:
     # ---------------------------------------------------------------------
     # Event handling
     # ---------------------------------------------------------------------
+
+    def _id_of(self, data: dict) -> str | None:
+        """Centralized accessor for event item id."""
+        return data.get("id")
+
+    def _subscribe_topics_for(
+        self, item_id: str, owner: str, topics: list[str]
+    ) -> None:
+        """Subscribe to per-entity state topics and remember unsub handles."""
+        if not topics:
+            return
+        unsubs: list[Callable[[], None]] = []
+        for t in topics:
+            full = f"{owner}.{t}"
+            self._topics[full] = item_id
+            unsubs.append(
+                self._bridge.state_store.on_change(self._handle_event, topic=full)
+            )
+        if unsubs:
+            self._unsubs.setdefault(item_id, []).extend(unsubs)
 
     async def _handle_event(self, evt_type: EventType, evt_data: dict | None) -> None:
         """Dispatch events with no branching duplication."""
@@ -161,89 +197,68 @@ class AmpioResourceController[AmpioResource]:
     def _evt_resource_added(
         self, data: dict
     ) -> tuple[EventType, str | None, Any | None]:
-        """RESOURCE_ADDED → build item, subscribe topics."""
-        item_id = data.get("id")
-        if not item_id:
-            return (EventType.RESOURCE_ADDED, None, None)
+        item_id = self._id_of(data)
+        if not item_id or self.item_cls is None:
+            return _NOOP
 
         try:
-            cur_item = self._items[item_id] = dataclass_from_dict(
-                self.item_cls,  # type: ignore[arg-type]
-                data,
-            )
+            cur_item = self._items[item_id] = dataclass_from_dict(self.item_cls, data)  # type: ignore[arg-type]
         except (KeyError, ValueError, TypeError) as exc:
             self._logger.error(
                 "Unable to parse resource, please report this to the authors of aioampio.",
                 exc_info=exc,
             )
-            return (EventType.RESOURCE_ADDED, None, None)
+            return _NOOP
 
-        # topics → owner map + unsubscribe handles
-        unsubs: list[Callable[[], None]] = []
-        for topic in data.get("states", []):
-            full_topic = f"{data['owner']}.{topic}"
-            self._topics[full_topic] = item_id
-            unsub = self._bridge.state_store.on_change(
-                self._handle_event, topic=full_topic
-            )
-            unsubs.append(unsub)
-        if unsubs:
-            self._unsubs.setdefault(item_id, []).extend(unsubs)
-
+        self._subscribe_topics_for(
+            item_id, data.get("owner", ""), data.get("states", [])
+        )
         return (EventType.RESOURCE_ADDED, item_id, cur_item)
 
     def _evt_resource_deleted(
         self, data: dict
     ) -> tuple[EventType, str | None, Any | None]:
-        """RESOURCE_DELETED → unsubscribe & drop item."""
-        item_id = data.get("id")
+        item_id = self._id_of(data)
         if not item_id:
             return (EventType.RESOURCE_DELETED, None, None)
 
-        # unsubscribe
+        # Best-effort unsubscribe and topic cleanup
         for unsub in self._unsubs.pop(item_id, []):
-            try:
+            with suppress(Exception):
                 unsub()
-            except Exception:  # pylint: disable=broad-exception-caught
-                self._logger.exception("Error while unsubscribing for %s", item_id)
+        # Remove only topics owned by this item_id (O(k) for its topics)
+        for t in [t for t, owner in self._topics.items() if owner == item_id]:
+            self._topics.pop(t, None)
 
-        # clear topic mappings
-        for t, owner in list(self._topics.items()):
-            if owner == item_id:
-                self._topics.pop(t, None)
-
-        cur_item = self._items.pop(item_id, data)
+        # Return the last known resource object (if present) to subscribers
+        cur_item = self._items.pop(item_id, None)
         return (EventType.RESOURCE_DELETED, item_id, cur_item)
 
     def _evt_resource_updated(
         self, data: dict
     ) -> tuple[EventType, str | None, Any | None]:
-        """RESOURCE_UPDATED → pass through current item if present."""
-        item_id = data.get("id")
+        item_id = self._id_of(data)
         if not item_id:
-            return (EventType.RESOURCE_UPDATED, None, None)
+            return _NOOP
         cur_item = self._items.get(item_id)
-        if cur_item is None:
-            return (EventType.RESOURCE_UPDATED, None, None)
-        return (EventType.RESOURCE_UPDATED, item_id, cur_item)
+        return (
+            (EventType.RESOURCE_UPDATED, item_id, cur_item)
+            if cur_item is not None
+            else _NOOP
+        )
 
     def _evt_entity_updated(
         self, data: dict
     ) -> tuple[EventType, str | None, Any | None]:
-        """ENTITY_UPDATED → apply to owning item; normalize as RESOURCE_UPDATED."""
         topic = data.get("topic")
         if not topic:
-            return (EventType.RESOURCE_UPDATED, None, None)
-
+            return _NOOP
         owner_id = self._topics.get(topic)
-        if owner_id is None:
-            return (EventType.RESOURCE_UPDATED, None, None)
-
+        if not owner_id:
+            return _NOOP
         cur_item = self._items.get(owner_id)
         if cur_item is None:
-            return (EventType.RESOURCE_UPDATED, None, None)
-
-        # entity dataclasses expose .update(topic, data)
+            return _NOOP
         cur_item.update(topic, data.get("data", {}))
         return (EventType.RESOURCE_UPDATED, owner_id, cur_item)
 
@@ -253,7 +268,6 @@ class AmpioResourceController[AmpioResource]:
         self, evt_type: EventType, item_id: str, cur_item: AmpioResource | dict | None
     ) -> None:
         """Notify matching subscribers; safe against callback errors."""
-        # Copy lists so we’re safe if callbacks mutate subscriptions
         subs = list(self._subscribers.get(item_id, [])) + list(
             self._subscribers.get(ID_FILTER_ALL, [])
         )
@@ -272,7 +286,7 @@ class AmpioResourceController[AmpioResource]:
     # ---------------------------------------------------------------------
 
     async def _send_multiframe_command(self, id: str, payload: bytes) -> None:
-        """Send a cover command payload twice."""
+        """Send a multiframe command using the controller CAN ID path."""
         device = self.get_device(id)
         if device is None:
             self._logger.error("Device not found for id: %s", id)
@@ -281,7 +295,7 @@ class AmpioResourceController[AmpioResource]:
             await self._bridge.send(CTRL_CAN_ID, data=p)
 
     async def _send_command(self, id: str, payload: bytes) -> None:
-        """Send a command payload."""
+        """Send a single-frame command using the controller CAN ID path."""
         device = self.get_device(id)
         if device is None:
             self._logger.error("Device not found for id: %s", id)
@@ -291,6 +305,7 @@ class AmpioResourceController[AmpioResource]:
         await self._bridge.send(CTRL_CAN_ID, data=payload)
 
     def _get_entity_index_or_log(self, id: str) -> int | None:
+        """Extract entity index from composite id and mask to 8 bits."""
         entity_index = get_entity_index(id)
         if entity_index is None:
             self._logger.error("Failed to extract switch number from id: %s", id)

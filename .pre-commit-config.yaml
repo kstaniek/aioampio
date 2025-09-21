@@ -86,7 +86,8 @@ repos:
         name: 🌟 Starring code with pylint
         language: system
         types: [python]
-        entry: scripts/run-in-env.sh pylint
+        entry: scripts/run-in-env.sh pylint --ignore=tests
+        exclude: ^tests/.*\.py$
       - id: trailing-whitespace
         name: ✄  Trim Trailing Whitespace
         language: system
