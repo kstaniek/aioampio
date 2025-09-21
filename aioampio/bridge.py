@@ -31,6 +31,7 @@ from .codec.registry import registry
 from .codec.base import CANFrame
 from .state_store import StateStore
 from .helpers.rx_reader import BoundedAsyncCanReader
+from .util import CanInterface, _discover_backends
 
 
 READ_TIMEOUT_S = 2.0
@@ -41,11 +42,23 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
     # --- Lifecycle: __init__, initialize(), start(), stop() -----------------
 
-    def __init__(self, cfg: dict[str, Any], host: str, port: int) -> None:
+    def __init__(  # pylint: disable=too-many-statements
+        self,
+        cfg: dict[str, Any],
+        host: str,
+        port: int,
+        *,
+        interface: CanInterface = "waveshare",
+        channel: str = "can0",
+        **bus_kwargs: Any,
+    ) -> None:
         """Initialize the Ampio Bridge."""
         self._ampio_cfg = cfg
         self._host = host
         self._port = port
+        self._interface: str = self._validate_interface(interface)
+        self._channel: str = channel or "can0"
+        self._bus_kwargs: dict[str, Any] = dict(bus_kwargs or {})
 
         self.logger = logging.getLogger(f"{__package__}[{self._host}]")
 
@@ -339,19 +352,31 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
     async def _run(self, host: str, port: int, channel: str = "can0") -> None:
         """Main bridge loop: connect, run session, reconnect on failure."""
         attempt = 0
+        had_rx = False
         while not self._stop_event.is_set():
             bus: can.BusABC | None = None
             try:
-                self.logger.info("Connecting to CAN at %s:%d", host, port)
+                # Build connection parameters each attempt (in case they change)
+                interface, channel, kwargs = self._resolve_bus_params(host, port)
+
+                if "host" in kwargs and "port" in kwargs:
+                    self.logger.info(
+                        "Connecting to CAN (iface=%s, channel=%s, host=%s, port=%s)",
+                        interface,
+                        channel,
+                        kwargs.get("host"),
+                        kwargs.get("port"),
+                    )
+                else:
+                    self.logger.info(
+                        "Connecting to CAN (iface=%s, channel=%s)", interface, channel
+                    )
+
                 try:
                     bus = can.Bus(
-                        interface="waveshare",
-                        host=host,
-                        port=port,
+                        interface=interface,
                         channel=channel,
-                        receive_own_messages=False,
-                        tcp_tune=True,
-                        fd=False,
+                        **kwargs,
                     )
                 except can.CanError as e:  # type: ignore[attr-defined]
                     self.logger.warning("Connect failed: %s", e)
@@ -392,6 +417,36 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             attempt += 1
             self.logger.info("Reconnecting to CAN bus in %.1f seconds", delay)
             await asyncio.sleep(delay)
+
+    def _resolve_bus_params(
+        self, host: str, port: int
+    ) -> tuple[str, str, dict[str, Any]]:
+        """Resolve (interface, channel, kwargs) for python-can Bus."""
+        interface = (self._interface or "waveshare").lower()
+        channel = self._channel or "can0"
+        kwargs: dict[str, Any] = dict(self._bus_kwargs or {})
+
+        # Always default to not echoing our own frames unless user overrides.
+        kwargs.setdefault("receive_own_messages", False)
+
+        if interface == "waveshare":
+            # Backward-compatible defaults for your existing setup.
+            kwargs.setdefault("host", host)
+            kwargs.setdefault("port", port)
+            kwargs.setdefault("tcp_tune", True)
+            kwargs.setdefault("fd", False)
+
+        elif interface == "socketcand":
+            kwargs.setdefault("host", host)
+            kwargs.setdefault("port", port)
+
+        elif interface == "socketcan":
+            # Local kernel interface; ensure we don't pass host/port.
+            kwargs.pop("host", None)
+            kwargs.pop("port", None)
+
+        # Other backends (pcan/kvaser/slcan/etc.) just pass through kwargs.
+        return interface, channel, kwargs
 
     async def _run_session(self, bus: can.BusABC) -> bool:
         """Run one connected session: setup, receive loop, teardown."""
@@ -616,3 +671,19 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
     def _inc_enq(self) -> None:
         self._rx_enqueued += 1
+
+    def _validate_interface(self, interface: str) -> str:
+        """Normalize and validate the requested python-can interface early."""
+        name = (interface or "").strip().lower()
+        if not name:
+            raise ValueError("CAN interface must be a non-empty string")
+
+        available = _discover_backends()
+        # 'waveshare' is your custom backend; it's included in available via fallback.
+        if name not in available:
+            pretty = ", ".join(sorted(available)) or "unknown (python-can not detected)"
+            raise ValueError(
+                f"Unknown CAN interface '{interface}'. "
+                f"Detected/known backends: {pretty}."
+            )
+        return name
