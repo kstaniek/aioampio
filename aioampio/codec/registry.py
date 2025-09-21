@@ -1,51 +1,54 @@
-"""Registry for CAN frame codecs."""
+"""Registry for CAN frame decoders"""
 
 from __future__ import annotations
 
-import asyncio
-from importlib import import_module
+from typing import Iterable, Protocol
+from .base import CANFrame
 
-from .base import Codec, AmpioMessage, CANFrame
+
+class Decoder(Protocol):
+    """Protocol for CAN frame decoders."""
+
+    def decode(self, frame: CANFrame) -> Iterable[object]:
+        """Decode a CAN frame.
+
+        Returns an iterable of decoded objects (can be empty if the codec does not match).
+        """
 
 
 class CodecRegistry:
-    """Registry for CAN frame codecs."""
+    """Registry for CAN frame decoders."""
 
     def __init__(self) -> None:
-        """Initialize the codec registry."""
-        self._codecs: list[Codec] = []
+        """Initialize the registry."""
+        self._codecs: list[Decoder] = []
 
-    def register(self, codec: Codec) -> None:
-        """Register a codec."""
+    def register(self, codec: Decoder) -> None:
+        """Register a codec to the registry."""
         self._codecs.append(codec)
 
-    def decode(self, frame: CANFrame) -> list[AmpioMessage] | None:
-        """Decode a CAN frame into an Ampio message."""
+    def decode(self, frame: CANFrame) -> list[object]:
+        """Try codecs in registration order and return the first non-empty result.
+
+        Always returns a list (empty if no codec matched).
+        """
         for codec in self._codecs:
-            message = codec.decode(frame)
-            if message:
-                return message
-        return None
-
-    async def load_modules(self, modules: list[str]) -> None:
-        """Dynamically load codec modules."""
-
-        async def async_import(mod: str) -> None:
-            """Import a module asynchronously."""
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, import_module, mod)
-
-        await asyncio.gather(*(async_import(mod) for mod in modules))
+            try:
+                out = codec.decode(frame)
+            except Exception:  # pylint: disable=broad-except
+                # bad codec should not break the pipeline
+                continue
+            if not out:
+                continue
+            # If the codec returned an iterable, normalize to list
+            return list(out)
+        return []
 
 
-_registry = CodecRegistry()
-
-
-def register_codec(codec: Codec) -> None:
-    """Register a codec globally."""
-    _registry.register(codec)
+# singleton access
+_REGISTRY = CodecRegistry()
 
 
 def registry() -> CodecRegistry:
-    """Get the global codec registry."""
-    return _registry
+    """Get the global codec registry instance."""
+    return _REGISTRY

@@ -6,8 +6,8 @@ from enum import Enum, unique
 from collections.abc import Callable
 
 
-from .base import AmpioMessage, Codec, CANFrame
-from .registry import register_codec
+from .base import AmpioMessage, CANFrame
+from .registry import registry
 
 log = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ def register_state_decoder(
     return _decorator
 
 
-class StateFrameRouter(Codec):
+class AmpioCodec:
     """Dispatches incoming CAN frames with data[0]=0xFE to the appropriate state decoder."""
 
     def __init__(self) -> None:
@@ -133,6 +133,7 @@ class StateFrameRouter(Codec):
         self._logger = logging.getLogger(__name__)
 
     def decode(self, frame: CANFrame) -> list[AmpioMessage] | None:
+        """Decode an Ampio state frame into one or more AmpioMessage instances."""
         if len(frame.data) == 3 and frame.data[0] == _STATE_SATEL_FLAG:
             # Handle SATEL specific decoding
             try:
@@ -158,13 +159,13 @@ class StateFrameRouter(Codec):
                     )
                     _unknown_state_decoder.add(ftype)
 
-        return None
+        return []
 
 
 def _decode_satel_status(frame: CANFrame) -> list[AmpioMessage] | None:
     if len(frame.data) >= 3:
         if frame.data[1] != 0xEF:  # satel status
-            return None
+            return []
         status = frame.data[2]
         response = satel_response_to_str(status)
         return [
@@ -262,7 +263,7 @@ def _decode_signed16b_factory(
         msg: list[AmpioMessage] = []
         for channel in range(start_channel, end_channel + 1):
             idx = 2 + 2 * (channel - start_channel)
-            if 0 <= idx < len(frame.data):
+            if 0 <= idx + 1 < len(frame.data):
                 low = int(frame.data[idx])
                 high = int(frame.data[idx + 1])
                 value = (high << 8) | low
@@ -316,7 +317,7 @@ def _decode_signed16b10000_factory(
         msg: list[AmpioMessage] = []
         for channel in range(start_channel, end_channel + 1):
             idx = 2 + 2 * (channel - start_channel)
-            if 0 <= idx < len(frame.data):
+            if 0 <= idx + 1 < len(frame.data):
                 low = int(frame.data[idx])
                 high = int(frame.data[idx + 1])
                 data = (high << 8) | low
@@ -336,6 +337,8 @@ def _decode_signed16b10000_factory(
 register_state_decoder(StateType.S16B10000_1)(_decode_signed16b10000_factory(1, 3))
 register_state_decoder(StateType.S16B10000_2)(_decode_signed16b10000_factory(4, 6))
 register_state_decoder(StateType.S16B10000_3)(_decode_signed16b10000_factory(7, 9))
+register_state_decoder(StateType.S16B10000_4)(_decode_signed16b10000_factory(10, 12))
+register_state_decoder(StateType.S16B10000_5)(_decode_signed16b10000_factory(13, 15))
 
 
 def _decode_satel_binary_factory(
@@ -485,4 +488,4 @@ register_state_decoder(StateType.HEATING_ZONE_16)(
     _decode_heating_zone_factory(16, "heating")
 )
 
-register_codec(StateFrameRouter())
+registry().register(AmpioCodec())
