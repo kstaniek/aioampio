@@ -6,7 +6,7 @@ from aioampio.models.resource import ResourceTypes
 from .base import AmpioResourceController
 
 
-class DevicesController(AmpioResourceController[type[Device]]):
+class DevicesController(AmpioResourceController[Device]):
     """Controller for managing Ampio devices."""
 
     item_type = ResourceTypes.DEVICE

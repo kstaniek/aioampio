@@ -5,7 +5,7 @@ from aioampio.models.resource import ResourceTypes
 from .base import AmpioResourceController
 
 
-class ValvesController(AmpioResourceController[type[Valve]]):
+class ValvesController(AmpioResourceController[Valve]):
     """Controller holding and managing Ampio resource type cover."""
 
     item_type = ResourceTypes.VALVE

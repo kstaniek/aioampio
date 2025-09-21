@@ -5,7 +5,7 @@ from aioampio.models.resource import ResourceTypes
 from .base import AmpioResourceController
 
 
-class SwitchesController(AmpioResourceController[type[Switch]]):
+class SwitchesController(AmpioResourceController[Switch]):
     """Controller holding and managing Ampio resource type switch."""
 
     item_type = ResourceTypes.SWITCH

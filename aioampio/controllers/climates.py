@@ -7,7 +7,7 @@ from .base import AmpioResourceController
 from .utils import get_entity_index
 
 
-class ClimatesController(AmpioResourceController[type[Climate]]):
+class ClimatesController(AmpioResourceController[Climate]):
     """Controller holding and managing Ampio resource type climate."""
 
     item_type = ResourceTypes.CLIMATE

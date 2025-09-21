@@ -7,7 +7,7 @@ from aioampio.models.resource import ResourceTypes
 from .base import AmpioResourceController
 
 
-class LightsController(AmpioResourceController[type[Light]]):
+class LightsController(AmpioResourceController[Light]):
     """Controller holding and managing Ampio resource type light."""
 
     item_type = ResourceTypes.LIGHT
