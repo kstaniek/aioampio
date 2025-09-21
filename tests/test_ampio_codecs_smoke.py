@@ -22,13 +22,15 @@ def _reload_ampio_codec_module() -> None:
 
 @pytest.fixture(scope="module")
 def codecs():
+    """Expose the registry's decoder objects (new: _decoders; legacy: _codecs)."""
     _reload_ampio_codec_module()
     reg = registry()
-    codecs = getattr(reg, "_codecs", [])
-    # sanity: at least one codec should be present
-    assert isinstance(codecs, list)
-    assert len(codecs) >= 1
-    return codecs
+    decs = getattr(reg, "_decoders", None)
+    if decs is None:
+        decs = getattr(reg, "_codecs", None)  # legacy compat
+    assert isinstance(decs, list)
+    assert len(decs) >= 1
+    return decs
 
 
 def _mv(data: bytes) -> memoryview:
@@ -82,21 +84,6 @@ def test_registry_decode_always_returns_list(codecs):
 def _hex(s: str) -> bytes:
     s = s.replace(" ", "").replace("_", "")
     return bytes.fromhex(s)
-
-
-# Example structure for when you add specific assertions later:
-# def _expect_first_item_has_field(out: list):
-#     assert out and isinstance(out[0], dict)
-#     assert out[0].get("field") == 0x0102
-#
-# KNOWN_VECTORS: dict[
-#     str | Callable[[Any], bool],
-#     list[tuple[int, str, Callable[[list], None]]],
-# ] = {
-#     "SomeCodecClassName": [
-#         (0x18FF1234, "01 02 03 04 05 06 07 08", _expect_first_item_has_field),
-#     ],
-# }
 
 
 def _expect_no_output(out: list):
@@ -310,7 +297,7 @@ def _expect_diagnostics(out: list):
 
 
 def _expect_s16b(base_index: int, length: int) -> Callable[[list], None]:
-    values = (44, 982, 114)  # if this is a temp / 10
+    values = (44, 982, 114)
 
     def _expect(out: list):
         assert out and len(out) == length
@@ -350,9 +337,6 @@ KNOWN_VECTORS: dict[
         (0x00000001, "FE 0F FF 00 FF 00 FF 00", _expect_binout(1, 48)),
         (0x00000001, "FE 10 19 09 15 07 0D 01", _expect_date_time),
         (0x00000001, "FE 10 19 09 15 07 0D", _expect_no_output),
-        # not supported yet index 4 value 2452
-        # fe_18_00_00_97_09_00_00 -> index 1 value 2455
-        # 209e (Modbus)
         (0x00000001, "FE 18 00 03 94 90 00 00", _expect_no_output),
         (0x00000001, "FE 19 F0 00 FF 00 FF 00", _expected_satel_armed(1, 8, "armed")),
         (0x00000001, "FE 1A F0 00 FF 00 FF 00", _expected_satel_armed(1, 8, "alarm")),

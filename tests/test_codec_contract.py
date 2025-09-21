@@ -19,13 +19,19 @@ class _CodecProto(Protocol):
 def _isolate_registry():
     """Snapshot and restore codec registry to keep tests hermetic."""
     reg = registry()
-    original = list(getattr(reg, "_codecs", []))
+    original = list(getattr(reg, "_decoders", getattr(reg, "_codecs", [])))
     try:
         # start each test with a clean registry
-        reg._codecs = []  # type: ignore[attr-defined]
+        if hasattr(reg, "_decoders"):
+            reg._decoders = []  # type: ignore[attr-defined]
+        else:
+            reg._codecs = []  # type: ignore[attr-defined]
         yield
     finally:
-        reg._codecs = original  # type: ignore[attr-defined]
+        if hasattr(reg, "_decoders"):
+            reg._decoders = original  # type: ignore[attr-defined]
+        else:
+            reg._codecs = original  # type: ignore[attr-defined]
 
 
 def _register_fake(codec: _CodecProto) -> None:
@@ -38,7 +44,8 @@ def test_ampio_codec_registers_on_import():
     importlib.import_module("aioampio.codec.ampio")
 
     reg = registry()
-    assert len(getattr(reg, "_codecs", [])) >= 1
+    count = len(getattr(reg, "_decoders", getattr(reg, "_codecs", [])))
+    assert count >= 1
 
 
 def test_decode_no_codecs_returns_empty_list():
@@ -74,7 +81,7 @@ def test_registry_dispatch_to_matching_codec():
     assert calls == [0xABCDEF01, target_id]
 
 
-def test_registry_short_circuits_on_first_match():
+def test_registry_aggregates_all_matches_in_order():
     order: list[str] = []
 
     class FirstCodec:
@@ -85,15 +92,15 @@ def test_registry_short_circuits_on_first_match():
     class SecondCodec:
         def decode(self, frame: CANFrame):
             order.append("second")
-            # if this is called, the registry didn't short-circuit
-            return [{"by": "second"}]
+            return [{"by": "second"}]  # also matches
 
     _register_fake(FirstCodec())
     _register_fake(SecondCodec())
 
     out = registry().decode(CANFrame(can_id=0x111, data=memoryview(b"\x00")))
-    assert out == [{"by": "first"}]
-    assert order == ["first"]  # ensure second wasn't consulted
+    # Current contract: aggregate outputs from all decoders, preserving registration order
+    assert out == [{"by": "first"}, {"by": "second"}]
+    assert order == ["first", "second"]
 
 
 def test_decoder_accepts_memoryview_zero_copy():

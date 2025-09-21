@@ -1,54 +1,82 @@
-"""Registry for CAN frame decoders"""
+"""Registry for frame decoders."""
 
 from __future__ import annotations
 
-from typing import Iterable, Protocol
+from collections.abc import Iterable
+from typing import Protocol, runtime_checkable, Any, Final
+import logging
+
 from .base import CANFrame
 
+log = logging.getLogger(__name__)
 
-class Decoder(Protocol):
-    """Protocol for CAN frame decoders."""
 
-    def decode(self, frame: CANFrame) -> Iterable[object]:
-        """Decode a CAN frame.
+@runtime_checkable
+class FrameDecoder(Protocol):
+    """Minimal contract every decoder already satisfies."""
 
-        Returns an iterable of decoded objects (can be empty if the codec does not match).
-        """
+    def decode(self, frame: CANFrame) -> Iterable[Any] | None:
+        """Decode a frame into zero or more objects."""
+
+
+@runtime_checkable
+class SupportsMatches(Protocol):
+    """Optional fast pre-filter."""
+
+    def matches(self, frame: CANFrame) -> bool:
+        """Return True if this decoder wants to decode the given frame."""
 
 
 class CodecRegistry:
-    """Registry for CAN frame decoders."""
+    """Holds decoders and fans frames out to matching ones."""
+
+    __slots__ = ("_decoders", "_log_errors")
 
     def __init__(self) -> None:
-        """Initialize the registry."""
-        self._codecs: list[Decoder] = []
+        """Create empty registry."""
+        self._decoders: list[FrameDecoder] = []
+        self._log_errors: bool = True
 
-    def register(self, codec: Decoder) -> None:
-        """Register a codec to the registry."""
-        self._codecs.append(codec)
+    # --- registration ------------------------------------------------------
+    def register(self, decoder: FrameDecoder) -> FrameDecoder:
+        """Register a decoder instance."""
+        self._decoders.append(decoder)
+        return decoder
 
-    def decode(self, frame: CANFrame) -> list[object]:
-        """Try codecs in registration order and return the first non-empty result.
+    def clear(self) -> None:
+        """Remove all registered decoders."""
+        self._decoders.clear()
 
-        Always returns a list (empty if no codec matched).
-        """
-        for codec in self._codecs:
+    # --- dispatch ----------------------------------------------------------
+    def decode(self, frame: CANFrame) -> list[Any]:
+        """Decode a frame by passing it to all matching registered decoders."""
+        out: list[Any] = []
+        for dec in list(self._decoders):
             try:
-                out = codec.decode(frame)
+                # Optional cheap pre-filter
+                if isinstance(dec, SupportsMatches) and not dec.matches(frame):
+                    continue
+
+                part = dec.decode(frame)
+                if part:
+                    # Normalize to list efficiently
+                    if isinstance(part, list):
+                        out.extend(part)
+                    else:
+                        out.extend(list(part))
             except Exception:  # pylint: disable=broad-except
-                # bad codec should not break the pipeline
-                continue
-            if not out:
-                continue
-            # If the codec returned an iterable, normalize to list
-            return list(out)
-        return []
+                # keep other decoders alive
+                if self._log_errors:
+                    log.exception(
+                        "Decoder %s failed on frame id=0x%X", dec, frame.can_id
+                    )
+        return out
 
 
-# singleton access
-_REGISTRY = CodecRegistry()
+# singleton – same import path you already use
+_SINGLETON: Final[CodecRegistry] = CodecRegistry()
 
 
 def registry() -> CodecRegistry:
-    """Get the global codec registry instance."""
-    return _REGISTRY
+    """Return the global singleton registry instance."""
+    return _SINGLETON
