@@ -57,7 +57,9 @@ class AmpioResourceController[AmpioResource]:
         self._items: dict[str, AmpioResource] = {}
         # topic -> item_id
         self._topics: dict[str, str] = {}
-        self._logger = bridge.logger.getChild(self.item_type.value)  # type: ignore[arg-type]
+        # Fallback logger name if a subclass forgets to set item_type
+        _logger_name = self.item_type.value if self.item_type else "resource"
+        self._logger = bridge.logger.getChild(_logger_name)
         self._subscribers: dict[str, list[EventSubscriptionType]] = {ID_FILTER_ALL: []}
         self._initialized = False
         # item_id -> list[unsubscribe]
@@ -97,20 +99,24 @@ class AmpioResourceController[AmpioResource]:
         event_filter: EventType | tuple[EventType, ...] | None = None,
     ) -> Callable[[], None]:
         """Subscribe to status changes for this resource type."""
-        if event_filter is not None and not isinstance(event_filter, tuple):
-            event_filter = (event_filter,)
 
-        if id_filter is None:
-            id_filter = (ID_FILTER_ALL,)
-        elif not isinstance(id_filter, tuple):
-            id_filter = (id_filter,)
+        # Normalize filters to tuples
+        def _as_tuple[T](
+            value: T | tuple[T, ...] | None, default: tuple[T, ...]
+        ) -> tuple[T, ...]:
+            if value is None:
+                return default
+            return value if isinstance(value, tuple) else (value,)
+
+        event_filter = _as_tuple(event_filter, default=())
+        id_filter = _as_tuple(id_filter, default=(ID_FILTER_ALL,))
 
         sub: EventSubscriptionType = (callback, event_filter)
         for id_key in id_filter:
             self._subscribers.setdefault(id_key, []).append(sub)
 
         def unsubscribe() -> None:
-            for id_key in id_filter:  # type: ignore[assignment]
+            for id_key in id_filter:
                 lst = self._subscribers.get(id_key)
                 if not lst:
                     continue
@@ -146,6 +152,16 @@ class AmpioResourceController[AmpioResource]:
     def __contains__(self, id: str) -> bool:
         """Check if the item is in the collection."""
         return id in self._items
+
+    def __len__(self) -> int:
+        """Return number of managed items."""
+        return len(self._items)
+
+    def by_owner(self, owner_id: str) -> list[AmpioResource]:
+        """Convenience: all items owned by a given device id."""
+        return [
+            it for it in self._items.values() if getattr(it, "owner", None) == owner_id
+        ]
 
     # ---------------------------------------------------------------------
     # Event handling
@@ -226,8 +242,8 @@ class AmpioResourceController[AmpioResource]:
         for unsub in self._unsubs.pop(item_id, []):
             with suppress(Exception):
                 unsub()
-        # Remove only topics owned by this item_id (O(k) for its topics)
-        for t in [t for t, owner in self._topics.items() if owner == item_id]:
+        # Remove only topics owned by this item_id (copy keys first)
+        for t in [t for t, owner in list(self._topics.items()) if owner == item_id]:
             self._topics.pop(t, None)
 
         # Return the last known resource object (if present) to subscribers
@@ -311,3 +327,16 @@ class AmpioResourceController[AmpioResource]:
             self._logger.error("Failed to extract switch number from id: %s", id)
             return None
         return entity_index & 0xFF
+
+    # ---------------------------------------------------------------------
+    # Optional: explicit teardown API (useful for tests / hot-reload)
+    # ---------------------------------------------------------------------
+
+    def close(self) -> None:
+        """Unsubscribe from all topics and clear state."""
+        for unsubs in list(self._unsubs.values()):
+            for unsub in unsubs:
+                with suppress(Exception):
+                    unsub()
+        self._unsubs.clear()
+        self._topics.clear()
