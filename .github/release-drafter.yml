@@ -10,15 +10,15 @@ categories:
     labels:
       - "dependencies"
       - "ci"
-  - title: '🚀 Features'
+  - title: "🚀 Features"
     labels:
-      - 'feature'
-      - 'new-feature'
-  - title: '🐛 Bug Fixes'
+      - "feature"
+      - "new-feature"
+  - title: "🐛 Bug Fixes"
     labels:
-      - 'fix'
-      - 'bugfix'
-      - 'bug'
+      - "fix"
+      - "bugfix"
+      - "bug"
 template: |
   ## What’s Changed
 
@@ -32,3 +32,6 @@ version-resolver:
       - "new-feature"
       - "enhancement"
   default: patch
+
+exclude-contributors:
+  - "dependabot"
