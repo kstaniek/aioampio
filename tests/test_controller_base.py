@@ -1,17 +1,42 @@
 # tests/test_controller_base.py
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 from dataclasses import dataclass, field
 from typing import Callable, Tuple
-import asyncio
-import inspect
+
 import pytest
 
-# Adjust import if your path differs:
 from aioampio.controllers.base import AmpioResourceController, ID_FILTER_ALL
 from aioampio.controllers.events import EventType
 from aioampio.models.resource import ResourceTypes
+
+
+# --- Ensure a main-thread loop exists for this module -------------------------
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _ensure_main_loop():
+    """Install a default event loop on MainThread for synchronous tests."""
+    try:
+        asyncio.get_running_loop()
+        # A loop is already running (unlikely for these sync tests).
+        yield
+        return
+    except RuntimeError:
+        pass
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        yield
+    finally:
+        try:
+            loop.close()
+        finally:
+            asyncio.set_event_loop(None)
 
 
 # --------------------------
@@ -43,24 +68,22 @@ class _DummyStateStore:
         """Simulate an incoming topic update by invoking callbacks.
 
         If a callback returns an awaitable (e.g., controller._handle_event),
-        we synchronously drive it to completion so assertions can run immediately.
+        run it to completion so assertions can run immediately.
         """
         for cb in list(self._subs.get(topic, [])):
             res = cb(EventType.ENTITY_UPDATED, {"topic": topic, "data": data})
             if inspect.isawaitable(res):
-                # Drive the coroutine to completion in this test thread
-                loop = None
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    pass
-                if loop and loop.is_running():
-                    # In case tests are marked asyncio, schedule and wait
-                    # (here we block; for true async tests you'd `await` emit)
-                    fut = asyncio.run_coroutine_threadsafe(res, loop)
-                    fut.result()
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # We're already inside a running loop: schedule and wait cooperatively
+                    # (this branch is unlikely in these sync tests).
+                    task = loop.create_task(res)
+                    # Let the task run to completion:
+                    loop.run_until_complete(asyncio.sleep(0))
+                    while not task.done():
+                        loop.run_until_complete(asyncio.sleep(0))
                 else:
-                    asyncio.get_event_loop().run_until_complete(res)
+                    loop.run_until_complete(res)
 
 
 class _DummyDevices:
@@ -109,9 +132,8 @@ def test_resource_added_subscribes_and_notifies(ctrl: DummyController):
 
     data = {"id": "dev1_itemA", "owner": "dev1", "states": ["s1", "s2"]}
 
-    asyncio.get_event_loop().run_until_complete(
-        ctrl._handle_event(EventType.RESOURCE_ADDED, data)
-    )
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(ctrl._handle_event(EventType.RESOURCE_ADDED, data))
 
     assert "dev1_itemA" in ctrl
     item = ctrl["dev1_itemA"]
@@ -127,9 +149,8 @@ def test_entity_update_routes_to_owner_and_normalizes(ctrl: DummyController):
     ctrl.subscribe(_collecting_subscriber(events), id_filter=ID_FILTER_ALL)
 
     data = {"id": "dev1_itemA", "owner": "dev1", "states": ["s1", "s2"]}
-    asyncio.get_event_loop().run_until_complete(
-        ctrl._handle_event(EventType.RESOURCE_ADDED, data)
-    )
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(ctrl._handle_event(EventType.RESOURCE_ADDED, data))
     item = ctrl["dev1_itemA"]
 
     ctrl._bridge.state_store.emit("dev1.s1", {"x": 1})
