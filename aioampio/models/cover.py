@@ -3,11 +3,15 @@
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
+import logging
 
 from aioampio.controllers.utils import get_entity_index
 from aioampio.models.feature import CoverPositionFeature, TiltPositionFeature
 
+from .base import validate_percentage
 from .resource import ResourceTypes
+
+logger = logging.getLogger(__name__)
 
 
 class CoverState(StrEnum):
@@ -17,55 +21,144 @@ class CoverState(StrEnum):
     OPEN = "open"
     CLOSING = "closing"
     CLOSED = "closed"
+    UNKNOWN = "unknown"
 
 
 @dataclass
 class Cover:
-    """Represents a cover resource."""
+    """Represents a cover resource with position and tilt control."""
 
     id: str
 
     cover: CoverPositionFeature = field(default_factory=CoverPositionFeature)
     tilt: TiltPositionFeature = field(default_factory=TiltPositionFeature)
-    state: CoverState | None = None
+    state: CoverState = CoverState.UNKNOWN
 
     opening: bool = False
     closing: bool = False
 
     name: str = ""
-    states: str | list[str] = field(default_factory=list)
+    states: list[str] = field(default_factory=list)
     owner: str | None = None
     area: str | None = None
     device_class: str | None = None
 
     type: ResourceTypes = ResourceTypes.COVER
 
-    def update(self, topic: str, data: dict[str, Any]) -> None:
-        """Update cover state from incoming data."""
+    # Entity index ranges
+    _cover_position_indices = range(0, 4)  # 0-3: Cover position
+    _tilt_position_indices = range(6, 10)  # 6-9: Tilt position
+
+    def update(self, topic: str, data: dict[str, Any]) -> bool:
+        """Update cover state from incoming data.
+
+        Args:
+            topic: Message topic
+            data: Payload data
+
+        Returns:
+            True if state changed, False otherwise
+        """
         entity_idx = get_entity_index(topic)
-        if entity_idx is not None:
-            position = data.get("value", 0)
-            if entity_idx < 4:  # cover
+        if entity_idx is None:
+            logger.debug("Cover %s: Could not extract entity index from topic", self.id)
+            return False
+
+        changed = False
+
+        try:
+            # Update positions
+            if "value" in data:
+                changed |= self._update_position(entity_idx, data["value"])
+
+            # Update motion state
+            if "binout" in topic and "state" in data:
+                changed |= self._update_motion(entity_idx, data["state"])
+
+            # Recompute overall state
+            new_state = self._compute_state()
+            if new_state != self.state:
+                self.state = new_state
+                changed = True
+
+        except (ValueError, TypeError) as e:
+            logger.warning(
+                "Cover %s: Failed to update from topic '%s': %s", self.id, topic, e
+            )
+            return False
+
+        return changed
+
+    def _update_position(self, entity_idx: int, value: Any) -> bool:
+        """Update position based on entity index."""
+        try:
+            position = validate_percentage(value)
+        except ValueError as e:
+            logger.warning(
+                "Cover %s: Invalid position value '%s': %s", self.id, value, e
+            )
+            return False
+
+        if entity_idx in self._cover_position_indices:
+            if self.cover.position != position:
                 self.cover.position = position
-            elif entity_idx > 5 and entity_idx < 10:  # pylint: disable=chained-comparison
+                return True
+        elif entity_idx in self._tilt_position_indices:
+            if self.tilt.position != position:
                 self.tilt.position = position
+                return True
 
-            if "binout" in topic:
-                state = data.get("state", False)
-                if entity_idx % 2 == 1:
-                    self.opening = state
+        return False
+
+    def _update_motion(self, entity_idx: int, state: Any) -> bool:
+        """Update opening/closing state based on entity index."""
+        motion_state = bool(state)
+        changed = False
+
+        # Odd indices = opening, even indices = closing
+        if entity_idx % 2 == 1:
+            if self.opening != motion_state:
+                self.opening = motion_state
+                if motion_state:
                     self.closing = False
-                else:
-                    self.closing = state
-                    self.opening = False
-
-        if self.opening and self.closing:
-            raise RuntimeError("Cover cannot be opening and closing at the same time")
-        if self.opening:
-            self.state = CoverState.OPENING
-        elif self.closing:
-            self.state = CoverState.CLOSING
-        elif self.tilt.position == 0 and self.cover.position == 0:
-            self.state = CoverState.CLOSED
+                changed = True
         else:
-            self.state = CoverState.OPEN
+            if self.closing != motion_state:
+                self.closing = motion_state
+                if motion_state:
+                    self.opening = False
+                changed = True
+
+        return changed
+
+    def _compute_state(self) -> CoverState:
+        """Compute the overall cover state based on motion and position."""
+        if self.opening and self.closing:
+            raise RuntimeError(
+                f"Cover {self.id}: Invalid state - cannot be opening and closing simultaneously"
+            )
+
+        if self.opening:
+            return CoverState.OPENING
+        if self.closing:
+            return CoverState.CLOSING
+
+        if self.cover.position == 0 and self.tilt.position == 0:
+            return CoverState.CLOSED
+
+        return CoverState.OPEN
+
+    @property
+    def is_closed(self) -> bool:
+        """Check if cover is fully closed."""
+        return self.state == CoverState.CLOSED
+
+    @property
+    def is_open(self) -> bool:
+        """Check if cover is fully open."""
+        return self.state == CoverState.OPEN
+
+    @property
+    def is_moving(self) -> bool:
+        """Check if cover is currently moving."""
+        return self.opening or self.closing

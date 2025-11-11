@@ -23,6 +23,18 @@ class StateStore:
     - Value: arbitrary JSON-like payload
     - Callbacks fire only when the payload actually changes
     - Notification order is preserved per topic
+
+    Thread Safety:
+        - Reading/writing values is protected by an async lock
+        - Notifications happen outside the lock to prevent blocking
+        - Multiple notifications for different topics can run concurrently
+
+    Callback Behavior:
+        - Global callbacks receive notifications for all topics
+        - Topic-specific callbacks only receive notifications for their topic
+        - Global callbacks are notified before topic-specific ones
+        - Callbacks are invoked with a snapshot of the callback list
+        - Failed callbacks are logged but don't stop other notifications
     """
 
     def __init__(self, bridge: AmpioBridge) -> None:
@@ -44,7 +56,25 @@ class StateStore:
     def on_change(
         self, cb: ChangeCallback, *, topic: str | None = None
     ) -> Callable[[], None]:
-        """Register a callback to be called when an entity changes."""
+        """Register a callback to be called when an entity changes.
+
+        Args:
+            cb: Callback function to invoke on changes. Can be sync or async.
+               Receives (EventType, dict) where dict contains:
+               - 'topic': The changed topic
+               - 'data': The new payload value
+               - 'previous': The old payload value (or None)
+            topic: If provided, only receive notifications for this specific topic.
+                   If None, receive notifications for all topics.
+
+        Returns:
+            Unsubscribe function that removes the callback when called
+
+        Note:
+            The same callback can be registered multiple times for different topics.
+            If registered both globally and for a specific topic, it will be called
+            twice for that topic's changes (once as global, once as topic-specific).
+        """
         if topic is None:
             lst = self._callbacks
         else:
@@ -66,11 +96,26 @@ class StateStore:
         return unsubscribe
 
     async def apply_message(self, msg: AmpioMessage) -> bool:
-        """Apply an incoming AmpioMessage to update the state store."""
+        """Apply an incoming AmpioMessage to update the state store.
+
+        Args:
+            msg: Ampio message containing topic and payload
+
+        Returns:
+            True if the value changed and callbacks were notified, False if unchanged
+        """
         return await self.set(msg.topic, msg.payload)
 
     async def set(self, topic: str, payload: Any) -> bool:
-        """Set the payload for a topic, notifying subscribers if it changed."""
+        """Set the payload for a topic, notifying subscribers if it changed.
+
+        Args:
+            topic: Topic identifier
+            payload: New value for the topic (any JSON-serializable type)
+
+        Returns:
+            True if the value changed and callbacks were notified, False if unchanged
+        """
         async with self._lock:
             old = self._values.get(topic)
             if self._equal(old, payload):
