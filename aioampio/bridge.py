@@ -46,10 +46,17 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         self,
         cfg: dict[str, Any],
         interface: CanInterface,
-        channel,
+        channel: str,
         **bus_kwargs: Any,
     ) -> None:
-        """Initialize the Ampio Bridge."""
+        """Initialize the Ampio Bridge.
+
+        Args:
+            cfg: Ampio configuration dictionary
+            interface: CAN interface backend name (e.g., 'socketcan', 'kvaser')
+            channel: CAN channel identifier (interface-specific, e.g., 'can0', 'vcan0')
+            bus_kwargs: Additional arguments passed to python-can Bus constructor
+        """
         self._ampio_cfg = cfg
         self._interface: str = self._validate_interface(interface)
         self._channel: str = channel
@@ -81,6 +88,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
         self._transport: asyncio.Task[None] | None = None
         self._bus: can.BusABC | None = None
+        self._bus_lock = asyncio.Lock()  # Protect bus access from race conditions
         self._stop_event: asyncio.Event = asyncio.Event()
 
         self._proc_queue: asyncio.Queue[can.Message] = asyncio.Queue(maxsize=1000)
@@ -115,6 +123,10 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         self._rx_per_s = 0.0
         self._tx_per_s = 0.0
         self._rate_alpha = 0.6  # EMA smoothing factor (0..1), higher = snappier
+
+        # Queue full logging (prevent log spam)
+        self._rx_backpressure_drop_logged = 0
+        self._queue_full_log_interval = 100  # Log every N drops
 
     async def initialize(self) -> None:
         """Initialize the bridge."""
@@ -187,35 +199,67 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             self._reconnect_now.set()
 
     async def send(self, can_id: int, data: bytes | memoryview) -> None:
-        """Send a CAN frame (non-blocking for the event loop)."""
-        bus = self._bus  # snapshot bus to avoid races with _bus = None
-        if self._reconnect_now.is_set() or bus is None:
-            self.logger.debug("TX dropped; reconnecting (bus unavailable)")
+        """Send a CAN frame (non-blocking for the event loop).
+
+        Args:
+            can_id: CAN arbitration ID (29-bit extended)
+            data: Frame payload (max 8 bytes for CAN 2.0)
+
+        Note:
+            Messages are dropped silently if bus is not connected or reconnecting.
+            Errors are logged and counted in metrics.
+        """
+        # Fast path: early exit without lock if reconnecting
+        if self._reconnect_now.is_set():
+            self.logger.debug("TX dropped; reconnect pending")
             return
-        msg = can.Message(
-            arbitration_id=can_id,
-            data=bytes(data),
-            is_extended_id=True,
-            is_fd=False,
-        )
-        loop = asyncio.get_running_loop()
-        try:
-            await loop.run_in_executor(None, bus.send, msg, 1.0)
-            self._tx_total += 1
-            self._last_tx_mono = time.monotonic()
-            self.logger.debug("TX id=0x%X len=%d", can_id, len(msg.data))
-        except can.CanError as e:  # type: ignore[attr-defined]
-            self._tx_errors += 1
-            self._tx_error_streak += 1
-            self.logger.error("TX failed; dropping frame id=0x%X: %s", can_id, e)
-            if (
-                "closed" in str(e).lower()
-                or self._tx_error_streak >= self._tx_error_reconnect_threshold
-            ):
-                self._reconnect_now.set()
-        else:
-            # on success, reset tx error streak
-            self._tx_error_streak = 0
+
+        # Lock-protected bus access to prevent TOCTOU race condition
+        async with self._bus_lock:
+            bus = self._bus
+            if bus is None:
+                self.logger.debug("TX dropped; bus not connected")
+                return
+
+            msg = can.Message(
+                arbitration_id=can_id,
+                data=bytes(data),
+                is_extended_id=True,
+                is_fd=False,
+            )
+            loop = asyncio.get_running_loop()
+            try:
+                await loop.run_in_executor(None, bus.send, msg, 1.0)
+                self._tx_total += 1
+                self._last_tx_mono = time.monotonic()
+                self._tx_error_streak = 0  # Reset on success
+                self.logger.debug("TX id=0x%X len=%d", can_id, len(msg.data))
+            except can.CanError as e:
+                self._handle_tx_error(can_id, e)
+            except OSError as e:
+                # Network/device errors (e.g., device unplugged)
+                self._handle_tx_error(can_id, e)
+
+    def _handle_tx_error(self, can_id: int, error: Exception) -> None:
+        """Handle transmission errors with reconnect logic.
+
+        Args:
+            can_id: The CAN ID that failed to send
+            error: The exception that occurred
+        """
+        self._tx_errors += 1
+        self._tx_error_streak += 1
+        self.logger.error("TX failed; dropping frame id=0x%X: %s", can_id, error)
+
+        if (
+            "closed" in str(error).lower()
+            or self._tx_error_streak >= self._tx_error_reconnect_threshold
+        ):
+            self.logger.warning(
+                "TX error threshold reached (%d consecutive failures); triggering reconnect",
+                self._tx_error_streak,
+            )
+            self._reconnect_now.set()
 
     # --- Public API: metrics & info ----------------------------------------
 
@@ -344,7 +388,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
     # --- Internal main loop -------------------------------------------------
 
-    async def _run(self) -> None:
+    async def _run(self) -> None:  # pylint: disable=too-many-statements
         """Main bridge loop: connect, run session, reconnect on failure."""
         attempt = 0
         had_rx = False
@@ -367,7 +411,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
                         channel=channel,
                         **kwargs,
                     )
-                except can.CanError as e:  # type: ignore[attr-defined]
+                except can.CanError as e:
                     self.logger.warning("Connect failed: %s", e)
                     bus = None
 
@@ -388,10 +432,22 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             except asyncio.CancelledError:
                 self.logger.info("Bridge task cancelled; shutting down")
                 break
+            except PermissionError as e:
+                self.logger.critical("Permission denied accessing CAN interface: %s", e)
+                # Don't reconnect on permission errors
+                break
             except can.CanError as e:
-                self.logger.warning("CAN error: %s", e)
-            except Exception:  # pylint: disable=broad-exception-caught
-                self.logger.exception("Error in CAN bus loop")
+                self.logger.warning("CAN error (will retry): %s", e, exc_info=True)
+                self._reconnects += 1
+            except OSError as e:
+                self.logger.error(
+                    "OS error (network/device issue): %s", e, exc_info=True
+                )
+                self._reconnects += 1
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                # Last resort - log with full context for debugging
+                self.logger.exception("Unexpected error in CAN bus loop: %s", e)
+                self._reconnects += 1
             finally:
                 # session teardown was handled inside _run_session; nothing else here
                 pass
@@ -449,6 +505,18 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
                     self._rx_proc_queued += 1
                 except asyncio.QueueFull:
                     self._rx_backpressure_drop += 1
+                    # Log periodically to avoid log spam
+                    drops_since_log = (
+                        self._rx_backpressure_drop - self._rx_backpressure_drop_logged
+                    )
+                    if drops_since_log >= self._queue_full_log_interval:
+                        self.logger.warning(
+                            "RX queue full; dropped %d messages (total: %d, queue depth: %d/1000)",
+                            drops_since_log,
+                            self._rx_backpressure_drop,
+                            self._proc_queue.qsize(),
+                        )
+                        self._rx_backpressure_drop_logged = self._rx_backpressure_drop
         finally:
             self._teardown_session(bus, notifier)
             await self._stop_rx_workers()
@@ -465,21 +533,46 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
     def _start_rx_workers(self, n: int = 1) -> None:
         async def worker(idx: int) -> None:
+            self.logger.debug("RX worker %d started", idx)
+            consecutive_errors = 0
+            max_consecutive_errors = 10
+
             while not self._stop_event.is_set():
                 try:
                     msg = await self._proc_queue.get()
                 except asyncio.CancelledError:
+                    self.logger.debug("RX worker %d cancelled", idx)
                     break
+
                 try:
                     self._rx_total += 1
                     self._last_rx_mono = time.monotonic()
                     await self._on_frame(msg)
-                except asyncio.CancelledError:  # pylint: disable=try-except-raise
-                    raise
-                except Exception:  # pylint: disable=broad-exception-caught
-                    self.logger.exception("RX worker %d failed", idx)
+                    consecutive_errors = 0  # Reset on success
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    # Re-raise cancellation to properly shutdown
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
+                    consecutive_errors += 1
+                    self.logger.exception(
+                        "RX worker %d processing failed (%d consecutive): %s",
+                        idx,
+                        consecutive_errors,
+                        e,
+                    )
+
+                    if consecutive_errors >= max_consecutive_errors:
+                        self.logger.critical(
+                            "RX worker %d: too many consecutive errors (%d); stopping worker",
+                            idx,
+                            consecutive_errors,
+                        )
+                        break
+
+            self.logger.debug("RX worker %d stopped", idx)
 
         self._rx_workers = [asyncio.create_task(worker(i)) for i in range(n)]
+        self.logger.info("Started %d RX worker(s)", n)
 
     async def _stop_rx_workers(self) -> None:
         for t in self._rx_workers:
@@ -489,7 +582,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
                 await t
         self._rx_workers.clear()
 
-    async def _on_frame(self, msg: can.Message) -> None:
+    async def _on_frame(self, msg: can.Message) -> None:  # pylint: disable=too-many-return-statements
         """Handle incoming CAN frame."""
         if not msg.is_extended_id:
             self.logger.debug("Ignoring non-extended CAN frame: %s", msg)
@@ -506,9 +599,18 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         frame = CANFrame(can_id=msg.arbitration_id, data=memoryview(msg.data))
         try:
             msgs = registry().decode(frame)
-        except Exception:  # pylint: disable=broad-exception-caught
+        except ValueError as e:
+            # Invalid frame data format
+            self.logger.warning("Invalid frame data id=0x%X: %s", msg.arbitration_id, e)
+            return
+        except KeyError as e:
+            # No decoder registered for this frame type
+            self.logger.debug("No decoder for frame id=0x%X: %s", msg.arbitration_id, e)
+            return
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            # Unexpected decoder error - log with full context
             self.logger.exception(
-                "Decoder failed for frame id=0x%X", msg.arbitration_id
+                "Decoder failed for frame id=0x%X: %s", msg.arbitration_id, e
             )
             return
         if not msgs:
@@ -528,7 +630,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             for can_id in self._whitelist
         ]
         try:
-            self._bus.set_filters(filters)  # type: ignore[call-arg]
+            self._bus.set_filters(filters)  # type: ignore[arg-type]
             self.logger.info("Device whitelist applied for %d devices", len(filters))
         except Exception:  # pylint: disable=broad-exception-caught
             # Some drivers may not support filters; don’t crash the bridge
