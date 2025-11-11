@@ -1,4 +1,48 @@
-"""Bridge metrics types and health assessment."""
+"""Bridge metrics types and health assessment.
+
+This module provides structured metrics for monitoring the Ampio bridge's
+operational health. Metrics include connection status, message throughput,
+error rates, and queue health.
+
+The metrics system provides:
+- Real-time connection and message statistics
+- Health assessment with thresholds
+- Rate calculations with exponential moving average
+- Recent activity tracking
+- Type-safe dictionary representation
+
+Metrics Categories:
+    Connection: State, session ID, uptime, reconnection count
+    Message Counters: RX/TX totals, queued, dropped
+    Rates: Smoothed messages per second for RX and TX
+    Errors: TX errors, RX drops, consecutive failures
+    Queue Health: Depth, backpressure indicators
+    Timing: Last RX/TX age, connection uptime
+
+The BridgeMetrics dataclass includes computed properties for health
+assessment (is_healthy, has_recent_rx/tx, error_rate, drop_rate).
+
+Example:
+    >>> metrics = BridgeMetrics(
+    ...     connected=True,
+    ...     connection_state="CONNECTED",
+    ...     session_id="abc123",
+    ...     rx_total=1000,
+    ...     tx_errors=5,
+    ...     # ... other fields
+    ... )
+    >>> print(metrics.is_healthy)
+    True
+    >>> print(f"Error rate: {metrics.error_rate:.2%}")
+    Error rate: 0.50%
+
+Classes:
+    BridgeMetricsDict: TypedDict for type-safe dictionary representation
+    BridgeMetrics: Dataclass with metrics and health assessment
+
+Types:
+    BridgeMetricsDict: Type-safe dictionary format for metrics export
+"""
 
 from dataclasses import dataclass
 from typing import TypedDict
@@ -8,7 +52,19 @@ class BridgeMetricsDict(TypedDict):
     """Type definition for bridge metrics dictionary.
 
     This TypedDict provides type safety for the metrics returned by
-    the bridge's metrics property.
+    the bridge's metrics property when converted to dictionary format
+    via to_dict().
+
+    All fields match the BridgeMetrics dataclass attributes.
+
+    Example:
+        >>> metrics_dict: BridgeMetricsDict = {
+        ...     "connected": True,
+        ...     "connection_state": "CONNECTED",
+        ...     "session_id": "abc123",
+        ...     "reconnects": 2,
+        ...     # ... all other required fields
+        ... }
     """
 
     connected: bool

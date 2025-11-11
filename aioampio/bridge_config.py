@@ -1,4 +1,37 @@
-"""Bridge configuration with validation."""
+"""Bridge configuration with validation.
+
+This module provides the BridgeConfig dataclass which centralizes all
+configuration options for the Ampio bridge. The configuration includes:
+
+- Connection timeouts and retry behavior
+- Watchdog timeouts for detecting connection issues
+- Queue sizes for message buffering
+- Error thresholds for triggering reconnection
+- Worker pool sizing
+- Metrics collection parameters
+
+The configuration is validated at initialization to catch common
+misconfiguration errors early. Validation checks include:
+- Positive values for all timeouts
+- Consistent watchdog timeout relationships
+- Reasonable queue sizes
+- Valid worker counts
+
+Example:
+    >>> config = BridgeConfig(
+    ...     read_timeout_s=5.0,
+    ...     reconnect_max_s=60.0,
+    ...     rx_worker_count=2
+    ... )
+    >>> config.read_timeout_s
+    5.0
+
+Classes:
+    BridgeConfig: Validated configuration dataclass
+
+Raises:
+    ValueError: If configuration validation fails
+"""
 
 from dataclasses import dataclass
 from typing import ClassVar
@@ -6,9 +39,47 @@ from typing import ClassVar
 
 @dataclass
 class BridgeConfig:
-    """Bridge configuration with validation.
+    """Bridge configuration with comprehensive validation.
 
-    All timeouts are in seconds. Queue sizes are in number of messages.
+    All timeout values are in seconds. Queue sizes are in number of messages.
+    This dataclass uses __post_init__ to validate relationships between
+    configuration values, ensuring the configuration is internally consistent.
+
+    Attributes:
+        read_timeout_s: Timeout for CAN message read operations
+        reconnect_initial_s: Initial delay before first reconnection attempt
+        reconnect_max_s: Maximum delay between reconnection attempts
+        tx_timeout_s: Timeout for CAN message transmission
+        idle_reconnect_s: Max idle time before forcing reconnect (None to disable)
+        rx_gap_reconnect_s: Max gap between RX messages before reconnect (None to disable)
+        max_no_rx_after_connect_s: Timeout for first RX after connect (None to disable)
+        rx_queue_size: Size of the RX processing queue
+        bounded_reader_size: Size of the bounded CAN reader buffer
+        tx_error_reconnect_threshold: Consecutive TX errors before reconnect
+        max_consecutive_rx_errors: Max consecutive RX errors per worker
+        rx_worker_count: Number of concurrent RX worker tasks
+        rate_smoothing_alpha: EMA smoothing factor for rate metrics (0..1)
+        queue_full_log_interval: Log every N queue full events
+
+    Raises:
+        ValueError: If any validation check fails
+
+    Example:
+        >>> # Production configuration with conservative timeouts
+        >>> config = BridgeConfig(
+        ...     read_timeout_s=2.0,
+        ...     reconnect_max_s=30.0,
+        ...     idle_reconnect_s=60.0,
+        ...     rx_worker_count=2
+        ... )
+
+        >>> # Testing configuration with aggressive timeouts
+        >>> test_config = BridgeConfig(
+        ...     read_timeout_s=0.5,
+        ...     reconnect_max_s=5.0,
+        ...     idle_reconnect_s=10.0,
+        ...     rx_worker_count=1
+        ... )
     """
 
     # Connection timeouts

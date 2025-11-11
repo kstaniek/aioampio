@@ -16,7 +16,9 @@ from aioampio.codec import ampio as _ampio  # noqa: F401
 from aioampio.config import AmpioConfig
 from aioampio.bridge_config import BridgeConfig
 from aioampio.metrics import BridgeMetrics, BridgeMetricsDict
+from aioampio.rx_workers import RxWorkerManager
 from aioampio.state_machine import ConnectionState, StateTransition
+from aioampio.tx_handler import TxHandler
 from aioampio.watchdog import (
     IdleWatchdog,
     NotifierStallWatchdog,
@@ -106,11 +108,25 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         self._proc_queue: asyncio.Queue[can.Message] = asyncio.Queue(
             maxsize=self._bridge_config.rx_queue_size
         )
-        self._rx_workers: list[asyncio.Task] = []
+
+        # TX handler for message transmission
+        self._tx_handler = TxHandler(
+            logger=self.logger,
+            bus_lock=self._bus_lock,
+            reconnect_event=asyncio.Event(),  # Will be set to self._reconnect_now after creation
+            tx_timeout_s=self._bridge_config.tx_timeout_s,
+            tx_error_threshold=self._bridge_config.tx_error_reconnect_threshold,
+        )
+
+        # RX worker manager for message processing
+        self._rx_worker_manager: RxWorkerManager | None = None
 
         self._reconnect_now: asyncio.Event = asyncio.Event()
         self._connected_since_mono: float | None = None
         self._connected_evt = asyncio.Event()
+
+        # Update TX handler with the actual reconnect event and callbacks
+        self._tx_handler._reconnect_event = self._reconnect_now
 
         # Watchdog manager
         self._watchdog_manager = WatchdogManager()
@@ -126,7 +142,6 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         self._reconnects = 0
         self._last_rx_mono: float | None = None
         self._last_tx_mono: float | None = None
-        self._tx_error_streak = 0
 
         # rate tracking / smoothing
         self._rate_prev_time = time.monotonic()
@@ -137,6 +152,10 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
         # Queue full logging (prevent log spam)
         self._rx_backpressure_drop_logged = 0
+
+        # Set TX handler callbacks for metrics tracking
+        self._tx_handler._on_tx_success = self._on_tx_success
+        self._tx_handler._on_tx_error = self._on_tx_error
 
     def _setup_watchdogs(self) -> None:
         """Set up watchdog timers based on configuration."""
@@ -295,59 +314,21 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             Messages are dropped silently if bus is not connected or reconnecting.
             Errors are logged and counted in metrics.
         """
-        # Fast path: early exit without lock if reconnecting
-        if self._reconnect_now.is_set():
-            self.logger.debug("TX dropped; reconnect pending")
-            return
+        # Delegate to TX handler
+        await self._tx_handler.send(self._bus, can_id, data)
 
-        # Lock-protected bus access to prevent TOCTOU race condition
-        async with self._bus_lock:
-            bus = self._bus
-            if bus is None:
-                self.logger.debug("TX dropped; bus not connected")
-                return
+    def _on_tx_success(self) -> None:
+        """Callback for successful transmission (updates metrics)."""
+        self._tx_total += 1
+        self._last_tx_mono = time.monotonic()
 
-            msg = can.Message(
-                arbitration_id=can_id,
-                data=bytes(data),
-                is_extended_id=True,
-                is_fd=False,
-            )
-            loop = asyncio.get_running_loop()
-            try:
-                await loop.run_in_executor(
-                    None, bus.send, msg, self._bridge_config.tx_timeout_s
-                )
-                self._tx_total += 1
-                self._last_tx_mono = time.monotonic()
-                self._tx_error_streak = 0  # Reset on success
-                self.logger.debug("TX id=0x%X len=%d", can_id, len(msg.data))
-            except can.CanError as e:
-                self._handle_tx_error(can_id, e)
-            except OSError as e:
-                # Network/device errors (e.g., device unplugged)
-                self._handle_tx_error(can_id, e)
-
-    def _handle_tx_error(self, can_id: int, error: Exception) -> None:
-        """Handle transmission errors with reconnect logic.
+    def _on_tx_error(self, error: Exception) -> None:
+        """Callback for transmission error (updates metrics).
 
         Args:
-            can_id: The CAN ID that failed to send
             error: The exception that occurred
         """
         self._tx_errors += 1
-        self._tx_error_streak += 1
-        self.logger.error("TX failed; dropping frame id=0x%X: %s", can_id, error)
-
-        if (
-            "closed" in str(error).lower()
-            or self._tx_error_streak >= self._bridge_config.tx_error_reconnect_threshold
-        ):
-            self.logger.warning(
-                "TX error threshold reached (%d consecutive failures); triggering reconnect",
-                self._tx_error_streak,
-            )
-            self._reconnect_now.set()
 
     # --- Public API: metrics & info ----------------------------------------
 
@@ -646,55 +627,26 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
     # --- Internal RX path ---------------------------------------------------
 
     def _start_rx_workers(self, n: int = 1) -> None:
-        async def worker(idx: int) -> None:
-            self.logger.debug("RX worker %d started", idx)
-            consecutive_errors = 0
-            max_consecutive_errors = 10
-
-            while not self._stop_event.is_set():
-                try:
-                    msg = await self._proc_queue.get()
-                except asyncio.CancelledError:
-                    self.logger.debug("RX worker %d cancelled", idx)
-                    break
-
-                try:
-                    self._rx_total += 1
-                    self._last_rx_mono = time.monotonic()
-                    await self._on_frame(msg)
-                    consecutive_errors = 0  # Reset on success
-                except Exception as e:  # pylint: disable=broad-exception-caught
-                    # Re-raise cancellation to properly shutdown
-                    if isinstance(e, asyncio.CancelledError):
-                        raise
-                    consecutive_errors += 1
-                    self.logger.exception(
-                        "RX worker %d processing failed (%d consecutive): %s",
-                        idx,
-                        consecutive_errors,
-                        e,
-                    )
-
-                    if consecutive_errors >= max_consecutive_errors:
-                        self.logger.critical(
-                            "RX worker %d: too many consecutive errors (%d); stopping worker",
-                            idx,
-                            consecutive_errors,
-                        )
-                        break
-
-            self.logger.debug("RX worker %d stopped", idx)
-
-        self._rx_workers = [asyncio.create_task(worker(i)) for i in range(n)]
-        self.logger.info("Started %d RX worker(s)", n)
+        """Start RX worker pool using RxWorkerManager."""
+        self._rx_worker_manager = RxWorkerManager(
+            logger=self.logger,
+            proc_queue=self._proc_queue,
+            stop_event=self._stop_event,
+            on_frame=self._on_frame,
+            on_message_processed=self._on_rx_message_processed,
+        )
+        self._rx_worker_manager.start(n)
 
     async def _stop_rx_workers(self) -> None:
-        for t in self._rx_workers:
-            t.cancel()
-        for t in self._rx_workers:
-            with suppress(asyncio.CancelledError):
-                await t
-        self._rx_workers.clear()
+        """Stop RX worker pool."""
+        if self._rx_worker_manager:
+            await self._rx_worker_manager.stop()
+            self._rx_worker_manager = None
+
+    def _on_rx_message_processed(self) -> None:
+        """Callback when RX message is processed (updates metrics)."""
+        self._rx_total += 1
+        self._last_rx_mono = time.monotonic()
 
     async def _on_frame(self, msg: can.Message) -> None:  # pylint: disable=too-many-return-statements
         """Handle incoming CAN frame."""

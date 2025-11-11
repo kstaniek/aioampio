@@ -1,10 +1,53 @@
-"""Bridge connection state machine."""
+"""Bridge connection state machine.
+
+This module defines the connection state machine for the Ampio bridge,
+including valid states and state transitions. The state machine ensures
+that the bridge connection lifecycle follows a predictable pattern and
+prevents invalid state transitions.
+
+State Flow:
+    DISCONNECTED -> CONNECTING -> CONNECTED -> RECONNECTING -> DISCONNECTED
+                 |            |             |
+                 v            v             v
+              STOPPING ->  STOPPING ->  STOPPING -> STOPPED
+
+The state machine provides:
+- Clear connection lifecycle semantics
+- Prevention of invalid state transitions
+- Easy monitoring of connection status
+- Consistent error handling patterns
+
+Classes:
+    ConnectionState: Enum of possible connection states
+    StateTransition: Validator for state machine transitions
+
+Example:
+    >>> state = ConnectionState.DISCONNECTED
+    >>> can_connect = StateTransition.is_valid(state, ConnectionState.CONNECTING)
+    >>> print(can_connect)
+    True
+"""
 
 from enum import Enum, auto
 
 
 class ConnectionState(Enum):
-    """Bridge connection state machine states."""
+    """Bridge connection state machine states.
+
+    This enum defines the possible states for the bridge connection lifecycle.
+    Each state represents a specific point in the connection flow.
+
+    States:
+        DISCONNECTED: Initial state with no active bus connection
+        CONNECTING: Bus creation and connection in progress
+        CONNECTED: Active session with data flow
+        RECONNECTING: Triggered reconnect, teardown in progress
+        STOPPING: Graceful shutdown requested
+        STOPPED: Final terminal state, bridge completely stopped
+
+    Note:
+        STOPPED is a terminal state with no outgoing transitions.
+    """
 
     DISCONNECTED = auto()  # Initial state, no bus connection
     CONNECTING = auto()  # Bus creation in progress

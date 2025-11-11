@@ -1,4 +1,43 @@
-"""Watchdog system for detecting connection issues."""
+"""Watchdog system for detecting connection issues.
+
+This module implements a flexible watchdog system for monitoring CAN bus
+connection health. Multiple watchdogs can run concurrently, each monitoring
+different aspects of the connection.
+
+Watchdog Types:
+    NotifierStallWatchdog: Detects when notifier connects but delivers no messages
+    RxGapWatchdog: Detects gaps in message reception after initial messages
+    IdleWatchdog: Detects extended periods of no activity (fallback watchdog)
+
+The watchdog system provides:
+- Multiple concurrent monitors for different failure modes
+- Configurable timeouts for each watchdog type
+- Unified triggering via reconnect event
+- Clean separation of concerns (each watchdog has one job)
+
+Architecture:
+    Each watchdog independently monitors specific conditions and can trigger
+    a reconnection event. The WatchdogManager coordinates checking all watchdogs
+    and provides a single interface for the bridge.
+
+Example:
+    >>> manager = WatchdogManager()
+    >>> manager.add_watchdog(
+    ...     NotifierStallWatchdog(logger, reconnect_event, timeout_s=10.0)
+    ... )
+    >>> manager.add_watchdog(
+    ...     RxGapWatchdog(logger, reconnect_event, timeout_s=15.0)
+    ... )
+    >>> # Later, check all watchdogs
+    >>> triggered = manager.check_all(now, connected_since, last_rx)
+
+Classes:
+    Watchdog: Abstract base class for all watchdogs
+    NotifierStallWatchdog: Detects notifier stall (no initial messages)
+    RxGapWatchdog: Detects gaps in message flow
+    IdleWatchdog: Detects extended idle periods (fallback)
+    WatchdogManager: Coordinates multiple watchdog instances
+"""
 
 import asyncio
 from abc import ABC, abstractmethod
@@ -9,7 +48,18 @@ class Watchdog(ABC):
     """Base class for watchdog timers that detect connection issues.
 
     Watchdogs monitor various aspects of the connection and signal when
-    a reconnect should be triggered.
+    a reconnect should be triggered. Each watchdog focuses on one specific
+    failure mode and operates independently.
+
+    The check() method is called periodically (typically on message read timeout)
+    and should return True if the watchdog condition is triggered.
+
+    Subclasses must implement:
+        check(now, connected_since, last_rx) -> bool
+
+    Attributes:
+        logger: Logger for watchdog messages
+        _reconnect_event: Event to set when reconnect is needed
     """
 
     def __init__(
