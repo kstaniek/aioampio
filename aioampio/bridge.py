@@ -2,11 +2,12 @@
 
 import asyncio
 from contextlib import suppress
+from dataclasses import dataclass
 from enum import Enum, auto
 import logging
 import random
 import time
-from typing import Any
+from typing import Any, ClassVar
 import uuid
 
 
@@ -34,9 +35,6 @@ from .codec.base import CANFrame
 from .state_store import StateStore
 from .helpers.rx_reader import BoundedAsyncCanReader
 from .util import CanInterface, _discover_backends
-
-
-READ_TIMEOUT_S = 2.0
 
 
 class ConnectionState(Enum):
@@ -92,6 +90,129 @@ class StateTransition:
         return to_state in cls.VALID_TRANSITIONS.get(from_state, set())
 
 
+@dataclass
+class BridgeConfig:
+    """Bridge configuration with validation.
+
+    All timeouts are in seconds. Queue sizes are in number of messages.
+    """
+
+    # Connection timeouts
+    read_timeout_s: float = 2.0
+    reconnect_initial_s: float = 0.5
+    reconnect_max_s: float = 30.0
+    tx_timeout_s: float = 1.0
+
+    # Watchdog timeouts (None to disable)
+    idle_reconnect_s: float | None = 60.0
+    rx_gap_reconnect_s: float | None = 10.0
+    max_no_rx_after_connect_s: float | None = 10.0
+
+    # Queue sizes
+    rx_queue_size: int = 1000
+    bounded_reader_size: int = 2000
+
+    # Error thresholds
+    tx_error_reconnect_threshold: int = 3
+    max_consecutive_rx_errors: int = 10
+
+    # Workers
+    rx_worker_count: int = 1
+
+    # Metrics
+    rate_smoothing_alpha: float = 0.6  # EMA factor (0..1), higher = more reactive
+    queue_full_log_interval: int = 100  # Log every N drops
+
+    # Constants
+    CTRL_CAN_ID: ClassVar[int] = 0x0F000000
+
+    def __post_init__(self) -> None:  # pylint: disable=too-many-branches
+        """Validate configuration relationships."""
+        errors = []
+
+        # Validate timeouts are positive
+        if self.read_timeout_s <= 0:
+            errors.append(f"read_timeout_s must be > 0, got {self.read_timeout_s}")
+
+        if self.reconnect_initial_s <= 0:
+            errors.append(
+                f"reconnect_initial_s must be > 0, got {self.reconnect_initial_s}"
+            )
+
+        if self.reconnect_max_s <= 0:
+            errors.append(f"reconnect_max_s must be > 0, got {self.reconnect_max_s}")
+
+        if self.tx_timeout_s <= 0:
+            errors.append(f"tx_timeout_s must be > 0, got {self.tx_timeout_s}")
+
+        # Validate reconnect relationship
+        if self.reconnect_initial_s > self.reconnect_max_s:
+            errors.append(
+                f"reconnect_initial_s ({self.reconnect_initial_s}) must be <= "
+                f"reconnect_max_s ({self.reconnect_max_s})"
+            )
+
+        # Validate watchdog timeout relationships
+        if self.max_no_rx_after_connect_s and self.idle_reconnect_s:
+            if self.max_no_rx_after_connect_s > self.idle_reconnect_s:
+                errors.append(
+                    f"max_no_rx_after_connect_s ({self.max_no_rx_after_connect_s}) "
+                    f"should be <= idle_reconnect_s ({self.idle_reconnect_s})"
+                )
+
+        if self.rx_gap_reconnect_s and self.idle_reconnect_s:
+            if self.rx_gap_reconnect_s > self.idle_reconnect_s:
+                errors.append(
+                    f"rx_gap_reconnect_s ({self.rx_gap_reconnect_s}) should be <= "
+                    f"idle_reconnect_s ({self.idle_reconnect_s})"
+                )
+
+        # Validate queue sizes
+        if self.rx_queue_size <= 0:
+            errors.append(f"rx_queue_size must be > 0, got {self.rx_queue_size}")
+
+        if self.bounded_reader_size <= 0:
+            errors.append(
+                f"bounded_reader_size must be > 0, got {self.bounded_reader_size}"
+            )
+
+        # Validate thresholds
+        if self.tx_error_reconnect_threshold <= 0:
+            errors.append(
+                f"tx_error_reconnect_threshold must be > 0, "
+                f"got {self.tx_error_reconnect_threshold}"
+            )
+
+        if self.max_consecutive_rx_errors <= 0:
+            errors.append(
+                f"max_consecutive_rx_errors must be > 0, "
+                f"got {self.max_consecutive_rx_errors}"
+            )
+
+        # Validate worker count
+        if self.rx_worker_count <= 0:
+            errors.append(f"rx_worker_count must be > 0, got {self.rx_worker_count}")
+
+        # Validate rate smoothing alpha
+        if not 0.0 < self.rate_smoothing_alpha <= 1.0:
+            errors.append(
+                f"rate_smoothing_alpha must be in (0, 1], "
+                f"got {self.rate_smoothing_alpha}"
+            )
+
+        # Validate log interval
+        if self.queue_full_log_interval <= 0:
+            errors.append(
+                f"queue_full_log_interval must be > 0, "
+                f"got {self.queue_full_log_interval}"
+            )
+
+        if errors:
+            raise ValueError(
+                "Bridge configuration validation failed:\n  - " + "\n  - ".join(errors)
+            )
+
+
 class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
     """Ampio Bridge main class."""
 
@@ -102,6 +223,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         cfg: dict[str, Any],
         interface: CanInterface,
         channel: str,
+        bridge_config: BridgeConfig | None = None,
         **bus_kwargs: Any,
     ) -> None:
         """Initialize the Ampio Bridge.
@@ -110,19 +232,18 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             cfg: Ampio configuration dictionary
             interface: CAN interface backend name (e.g., 'socketcan', 'kvaser')
             channel: CAN channel identifier (interface-specific, e.g., 'can0', 'vcan0')
+            bridge_config: Bridge configuration. If None, uses defaults
             bus_kwargs: Additional arguments passed to python-can Bus constructor
         """
         self._ampio_cfg = cfg
         self._interface: str = self._validate_interface(interface)
         self._channel: str = channel
         self._bus_kwargs: dict[str, Any] = dict(bus_kwargs or {})
+        self._bridge_config = bridge_config or BridgeConfig()
 
         self.logger = logging.getLogger(f"{__package__}[{self._channel}]")
 
         self._config = AmpioConfig(self)
-
-        self._reconnect_initial = 0.5
-        self._reconnect_max = 30.0
 
         self.state_store = StateStore(self)
 
@@ -151,18 +272,14 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         self._bus_lock = asyncio.Lock()  # Protect bus access from race conditions
         self._stop_event: asyncio.Event = asyncio.Event()
 
-        self._proc_queue: asyncio.Queue[can.Message] = asyncio.Queue(maxsize=1000)
+        self._proc_queue: asyncio.Queue[can.Message] = asyncio.Queue(
+            maxsize=self._bridge_config.rx_queue_size
+        )
         self._rx_workers: list[asyncio.Task] = []
 
         self._reconnect_now: asyncio.Event = asyncio.Event()
-        self._idle_reconnect_s: float | None = 60.0  # set None to disable
-        self._rx_gap_reconnect_s: float | None = (
-            10.0  # reconnect if no RX for this long after previously receiving
-        )
-        self._tx_error_reconnect_threshold = 3
         self._connected_since_mono: float | None = None
         self._connected_evt = asyncio.Event()
-        self._max_no_rx_after_connect_s: float | None = 10.0  # None to disable
 
         # metrics
         self._rx_total = 0
@@ -182,11 +299,9 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         self._rate_prev_tx = 0
         self._rx_per_s = 0.0
         self._tx_per_s = 0.0
-        self._rate_alpha = 0.6  # EMA smoothing factor (0..1), higher = snappier
 
         # Queue full logging (prevent log spam)
         self._rx_backpressure_drop_logged = 0
-        self._queue_full_log_interval = 100  # Log every N drops
 
     async def initialize(self) -> None:
         """Initialize the bridge."""
@@ -331,7 +446,9 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             )
             loop = asyncio.get_running_loop()
             try:
-                await loop.run_in_executor(None, bus.send, msg, 1.0)
+                await loop.run_in_executor(
+                    None, bus.send, msg, self._bridge_config.tx_timeout_s
+                )
                 self._tx_total += 1
                 self._last_tx_mono = time.monotonic()
                 self._tx_error_streak = 0  # Reset on success
@@ -355,7 +472,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
         if (
             "closed" in str(error).lower()
-            or self._tx_error_streak >= self._tx_error_reconnect_threshold
+            or self._tx_error_streak >= self._bridge_config.tx_error_reconnect_threshold
         ):
             self.logger.warning(
                 "TX error threshold reached (%d consecutive failures); triggering reconnect",
@@ -413,7 +530,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
         inst_rx = drx / dt
         inst_tx = dtx / dt
-        a = self._rate_alpha
+        a = self._bridge_config.rate_smoothing_alpha
 
         # Exponential moving average
         self._rx_per_s = a * inst_rx + (1.0 - a) * self._rx_per_s
@@ -587,7 +704,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         loop = asyncio.get_running_loop()
         bounded = BoundedAsyncCanReader(
             loop=loop,
-            maxsize=2000,
+            maxsize=self._bridge_config.bounded_reader_size,
             drop_oldest=True,
             on_drop=self._inc_drop,
             on_enqueue=self._inc_enq,
@@ -595,21 +712,24 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         notifier: can.Notifier | None = None
         try:
             notifier = can.Notifier(bus, [bounded.listener])
-            self._start_rx_workers(n=1)
+            self._start_rx_workers(n=self._bridge_config.rx_worker_count)
             while True:
                 if self._should_reconnect():
                     self.logger.info("Reconnect requested; leaving reader loop")
                     break
 
                 try:
-                    msg = await asyncio.wait_for(bounded.get(), READ_TIMEOUT_S)
+                    msg = await asyncio.wait_for(
+                        bounded.get(), self._bridge_config.read_timeout_s
+                    )
                     had_rx = True
                 except asyncio.TimeoutError:
                     # heartbeat tick
                     if self._idle_watchdog():
                         continue
                     self.logger.debug(
-                        "No CAN messages in the last %.1f seconds", READ_TIMEOUT_S
+                        "No CAN messages in the last %.1f seconds",
+                        self._bridge_config.read_timeout_s,
                     )
                     continue
 
@@ -622,7 +742,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
                     drops_since_log = (
                         self._rx_backpressure_drop - self._rx_backpressure_drop_logged
                     )
-                    if drops_since_log >= self._queue_full_log_interval:
+                    if drops_since_log >= self._bridge_config.queue_full_log_interval:
                         self.logger.warning(
                             "RX queue full; dropped %d messages (total: %d, queue depth: %d/1000)",
                             drops_since_log,
@@ -757,7 +877,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
     def _idle_watchdog(self) -> bool:
         """Return True if we should force reconnect due to idleness/stall."""
-        if self._idle_reconnect_s is None:
+        if self._bridge_config.idle_reconnect_s is None:
             return False
 
         now = time.monotonic()
@@ -765,9 +885,12 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         idle = max(0.0, now - base)
 
         # 1) Stall: no RX at all since connect → quick reconnect
-        if self._max_no_rx_after_connect_s is not None and self._last_rx_mono is None:
+        if (
+            self._bridge_config.max_no_rx_after_connect_s is not None
+            and self._last_rx_mono is None
+        ):
             since = now - (self._connected_since_mono or now)
-            if since >= self._max_no_rx_after_connect_s:
+            if since >= self._bridge_config.max_no_rx_after_connect_s:
                 self.logger.warning(
                     "No RX within %.0fs after connect; forcing reconnect (notifier stall?)",
                     since,
@@ -777,9 +900,9 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
         # 2) RX-gap: we *had* RX before, but we've seen nothing for too long
         if (
-            self._rx_gap_reconnect_s is not None
+            self._bridge_config.rx_gap_reconnect_s is not None
             and self._last_rx_mono is not None
-            and (now - self._last_rx_mono) >= self._rx_gap_reconnect_s
+            and (now - self._last_rx_mono) >= self._bridge_config.rx_gap_reconnect_s
         ):
             gap = now - self._last_rx_mono
             self.logger.warning(
@@ -790,7 +913,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             return True
 
         # 3) Fallback: long idle since last RX or connect
-        if idle >= self._idle_reconnect_s:
+        if idle >= self._bridge_config.idle_reconnect_s:
             self.logger.warning(
                 "No RX for %.0fs; forcing reconnect (idle watchdog)", idle
             )
@@ -839,7 +962,10 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
     def _next_backoff(self, attempt: int) -> float:
         """Calculate the next backoff delay."""
-        upper = min(self._reconnect_max, self._reconnect_initial * (2**attempt))
+        upper = min(
+            self._bridge_config.reconnect_max_s,
+            self._bridge_config.reconnect_initial_s * (2**attempt),
+        )
         return random.uniform(0.0, upper)
 
     # --- Internal counters/queue helpers ------------------------------------
