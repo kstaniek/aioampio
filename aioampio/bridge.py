@@ -45,22 +45,17 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
     def __init__(  # pylint: disable=too-many-statements
         self,
         cfg: dict[str, Any],
-        host: str,
-        port: int,
-        *,
-        interface: CanInterface = "waveshare",
-        channel: str = "can0",
+        interface: CanInterface,
+        channel,
         **bus_kwargs: Any,
     ) -> None:
         """Initialize the Ampio Bridge."""
         self._ampio_cfg = cfg
-        self._host = host
-        self._port = port
         self._interface: str = self._validate_interface(interface)
-        self._channel: str = channel or "can0"
+        self._channel: str = channel
         self._bus_kwargs: dict[str, Any] = dict(bus_kwargs or {})
 
-        self.logger = logging.getLogger(f"{__package__}[{self._host}]")
+        self.logger = logging.getLogger(f"{__package__}[{self._channel}]")
 
         self._config = AmpioConfig(self)
 
@@ -147,7 +142,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             self.logger.debug("Bridge already running")
             return
         self._stop_event.clear()
-        self._transport = asyncio.create_task(self._run(self._host, self._port))
+        self._transport = asyncio.create_task(self._run())
         self.logger.info("Bridge started")
 
     async def stop(self) -> None:
@@ -349,7 +344,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
     # --- Internal main loop -------------------------------------------------
 
-    async def _run(self, host: str, port: int, channel: str = "can0") -> None:
+    async def _run(self) -> None:
         """Main bridge loop: connect, run session, reconnect on failure."""
         attempt = 0
         had_rx = False
@@ -357,20 +352,14 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             bus: can.BusABC | None = None
             try:
                 # Build connection parameters each attempt (in case they change)
-                interface, channel, kwargs = self._resolve_bus_params(host, port)
-
-                if "host" in kwargs and "port" in kwargs:
-                    self.logger.info(
-                        "Connecting to CAN (iface=%s, channel=%s, host=%s, port=%s)",
-                        interface,
-                        channel,
-                        kwargs.get("host"),
-                        kwargs.get("port"),
-                    )
-                else:
-                    self.logger.info(
-                        "Connecting to CAN (iface=%s, channel=%s)", interface, channel
-                    )
+                interface, channel, kwargs = (
+                    self._interface,
+                    self._channel,
+                    self._bus_kwargs,
+                )
+                self.logger.info(
+                    "Connecting to CAN (iface=%s, channel=%s)", interface, channel
+                )
 
                 try:
                     bus = can.Bus(
@@ -392,7 +381,8 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
                     await asyncio.sleep(delay)
                     continue
 
-                self._log_connected(host, port, channel)
+                self.logger.info("Connected (iface=%s, channel=%s)", interface, channel)
+
                 had_rx = await self._run_session(bus)
 
             except asyncio.CancelledError:
@@ -417,36 +407,6 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             attempt += 1
             self.logger.info("Reconnecting to CAN bus in %.1f seconds", delay)
             await asyncio.sleep(delay)
-
-    def _resolve_bus_params(
-        self, host: str, port: int
-    ) -> tuple[str, str, dict[str, Any]]:
-        """Resolve (interface, channel, kwargs) for python-can Bus."""
-        interface = (self._interface or "waveshare").lower()
-        channel = self._channel or "can0"
-        kwargs: dict[str, Any] = dict(self._bus_kwargs or {})
-
-        # Always default to not echoing our own frames unless user overrides.
-        kwargs.setdefault("receive_own_messages", False)
-
-        if interface == "waveshare":
-            # Backward-compatible defaults for your existing setup.
-            kwargs.setdefault("host", host)
-            kwargs.setdefault("port", port)
-            kwargs.setdefault("tcp_tune", True)
-            kwargs.setdefault("fd", False)
-
-        elif interface == "socketcand":
-            kwargs.setdefault("host", host)
-            kwargs.setdefault("port", port)
-
-        elif interface == "socketcan":
-            # Local kernel interface; ensure we don't pass host/port.
-            kwargs.pop("host", None)
-            kwargs.pop("port", None)
-
-        # Other backends (pcan/kvaser/slcan/etc.) just pass through kwargs.
-        return interface, channel, kwargs
 
     async def _run_session(self, bus: can.BusABC) -> bool:
         """Run one connected session: setup, receive loop, teardown."""
@@ -649,15 +609,6 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         if bus is not None:
             with suppress(Exception):
                 bus.shutdown()
-
-    def _log_connected(self, host: str, port: int, channel: str) -> None:
-        """Log connection established."""
-        self.logger.info(
-            "Connected (iface=waveshare, channel=%s, host=%s, port=%d)",
-            channel,
-            host,
-            port,
-        )
 
     def _next_backoff(self, attempt: int) -> float:
         """Calculate the next backoff delay."""
