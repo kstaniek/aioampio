@@ -11,9 +11,10 @@ async def read_text(path: str) -> str:
 
 
 # ---- CAN interface typing & discovery ---------------------------------------
-# Common python-can backend names + your custom 'waveshare'
+# Common python-can backend names + your custom 'waveshare' and 'cannelloni'
 KnownCanInterface = Literal[
     "waveshare",
+    "cannelloni",
     "socketcand",
     "socketcan",
     "slcan",
@@ -40,11 +41,6 @@ def _discover_backends() -> set[str]:
         # python-can exposes backends via can.interface module
         from can import interface as _can_iface  # pylint: disable=import-outside-toplevel
 
-        # Newer python-can:
-        discovered = getattr(_can_iface, "VALID_INTERFACES", None)
-        if discovered:
-            names.update(map(str, discovered))
-        # Older python-can:
         backends = getattr(_can_iface, "BACKENDS", None)
         if isinstance(backends, dict):
             names.update(map(str, backends.keys()))
@@ -55,20 +51,7 @@ def _discover_backends() -> set[str]:
     names.update(
         [
             "waveshare",
-            "socketcand",
-            "socketcan",
-            "slcan",
-            "pcan",
-            "kvaser",
-            "ixxat",
-            "vector",
-            "nican",
-            "neovi",
-            "usb2can",
-            "cantact",  # codespell:ignore
-            "canalystii",
-            "seeedstudio",
-            "virtual",
+            "cannelloni",
         ]
     )
     # Normalize
