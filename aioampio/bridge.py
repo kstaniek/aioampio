@@ -8,7 +8,7 @@ from enum import Enum, auto
 import logging
 import random
 import time
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypedDict
 import uuid
 
 
@@ -476,6 +476,161 @@ class WatchdogManager:
         return len(self._watchdogs) > 0
 
 
+class BridgeMetricsDict(TypedDict):
+    """Type definition for bridge metrics dictionary.
+
+    This TypedDict provides type safety for the metrics returned by
+    the bridge's metrics property.
+    """
+
+    connected: bool
+    connection_state: str
+    session_id: str | None
+    reconnects: int
+    rx_total: int
+    tx_total: int
+    rx_rate_s: float
+    tx_rate_s: float
+    rx_enqueued: int
+    rx_proc_queued: int
+    rx_dropped: int
+    tx_errors: int
+    rx_queue_depth: int
+    last_rx_age_s: float | None
+    last_tx_age_s: float | None
+    connection_uptime_s: float | None
+
+
+@dataclass
+class BridgeMetrics:  # pylint: disable=too-many-instance-attributes
+    """Bridge metrics with health assessment.
+
+    Provides structured access to bridge metrics and health indicators.
+    """
+
+    # Connection metrics
+    connected: bool
+    connection_state: str
+    session_id: str | None
+    reconnects: int
+    connection_uptime_s: float | None
+
+    # Message counters
+    rx_total: int
+    tx_total: int
+    rx_enqueued: int
+    rx_proc_queued: int
+
+    # Error/drop counters
+    rx_dropped: int
+    tx_errors: int
+
+    # Rates (messages per second)
+    rx_rate_s: float
+    tx_rate_s: float
+
+    # Queue metrics
+    rx_queue_depth: int
+
+    # Timing metrics
+    last_rx_age_s: float | None
+    last_tx_age_s: float | None
+
+    @property
+    def is_healthy(self) -> bool:
+        """Check if bridge is in healthy state.
+
+        Returns:
+            True if bridge is healthy
+        """
+        if not self.connected:
+            return False
+
+        # Check for excessive errors
+        if self.tx_errors > 100:
+            return False
+
+        # Check for excessive drops
+        if self.rx_dropped > 1000:
+            return False
+
+        # Check for queue backlog (using 80% threshold)
+        # Note: Queue size is configuration-dependent
+        if self.rx_queue_depth > 800:  # Assumes default 1000 queue size
+            return False
+
+        return True
+
+    @property
+    def has_recent_rx(self) -> bool:
+        """Check if RX activity is recent.
+
+        Returns:
+            True if received message in last 30 seconds
+        """
+        if self.last_rx_age_s is None:
+            return False
+        return self.last_rx_age_s < 30.0
+
+    @property
+    def has_recent_tx(self) -> bool:
+        """Check if TX activity is recent.
+
+        Returns:
+            True if transmitted message in last 30 seconds
+        """
+        if self.last_tx_age_s is None:
+            return False
+        return self.last_tx_age_s < 30.0
+
+    @property
+    def error_rate(self) -> float:
+        """Calculate TX error rate.
+
+        Returns:
+            Ratio of errors to total TX (0.0 to 1.0), or 0.0 if no TX
+        """
+        if self.tx_total == 0:
+            return 0.0
+        return self.tx_errors / self.tx_total
+
+    @property
+    def drop_rate(self) -> float:
+        """Calculate RX drop rate.
+
+        Returns:
+            Ratio of drops to total enqueued (0.0 to 1.0), or 0.0 if none enqueued
+        """
+        if self.rx_enqueued == 0:
+            return 0.0
+        return self.rx_dropped / self.rx_enqueued
+
+    def to_dict(self) -> BridgeMetricsDict:
+        """Convert to dictionary format.
+
+        Returns:
+            Dictionary with all metrics
+        """
+        return {
+            "connected": self.connected,
+            "connection_state": self.connection_state,
+            "session_id": self.session_id,
+            "reconnects": self.reconnects,
+            "rx_total": self.rx_total,
+            "tx_total": self.tx_total,
+            "rx_rate_s": self.rx_rate_s,
+            "tx_rate_s": self.tx_rate_s,
+            "rx_enqueued": self.rx_enqueued,
+            "rx_proc_queued": self.rx_proc_queued,
+            "rx_dropped": self.rx_dropped,
+            "tx_errors": self.tx_errors,
+            "rx_queue_depth": self.rx_queue_depth,
+            "last_rx_age_s": self.last_rx_age_s,
+            "last_tx_age_s": self.last_tx_age_s,
+            "connection_uptime_s": self.connection_uptime_s,
+        }
+
+
 class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
     """Ampio Bridge main class."""
 
@@ -791,36 +946,48 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         return max(0.0, time.monotonic() - self._connected_since_mono)
 
     @property
-    def metrics(self) -> dict[str, Any]:
-        """Return connection and message metrics."""
+    def metrics(self) -> BridgeMetrics:
+        """Return connection and message metrics.
+
+        Returns:
+            Structured metrics with health assessment capabilities
+        """
         self._update_rates()
         now = time.monotonic()
-        return {
-            "connected": self.connected,
-            "connection_state": self._connection_state.name,
-            "session_id": self._session_id,
-            "reconnects": self._reconnects,
-            "rx_total": self._rx_total,
-            "tx_total": self._tx_total,
-            "rx_rate_s": self._rx_per_s,
-            "tx_rate_s": self._tx_per_s,
-            "rx_enqueued": self._rx_enqueued,
-            "rx_proc_queued": self._rx_proc_queued,
-            "rx_dropped": self._rx_backpressure_drop,
-            "tx_errors": self._tx_errors,
-            "rx_queue_depth": self._proc_queue.qsize(),
-            "last_rx_age_s": (
+        return BridgeMetrics(
+            connected=self.connected,
+            connection_state=self._connection_state.name,
+            session_id=self._session_id,
+            reconnects=self._reconnects,
+            connection_uptime_s=self.connection_uptime_s,
+            rx_total=self._rx_total,
+            tx_total=self._tx_total,
+            rx_enqueued=self._rx_enqueued,
+            rx_proc_queued=self._rx_proc_queued,
+            rx_dropped=self._rx_backpressure_drop,
+            tx_errors=self._tx_errors,
+            rx_rate_s=self._rx_per_s,
+            tx_rate_s=self._tx_per_s,
+            rx_queue_depth=self._proc_queue.qsize(),
+            last_rx_age_s=(
                 None
                 if self._last_rx_mono is None
                 else max(0.0, now - self._last_rx_mono)
             ),
-            "last_tx_age_s": (
+            last_tx_age_s=(
                 None
                 if self._last_tx_mono is None
                 else max(0.0, now - self._last_tx_mono)
             ),
-            "connection_uptime_s": self.connection_uptime_s,
-        }
+        )
+
+    def get_metrics_dict(self) -> BridgeMetricsDict:
+        """Return metrics as dictionary (backward compatibility).
+
+        Returns:
+            Dictionary with all metrics
+        """
+        return self.metrics.to_dict()
 
     def _update_rates(self) -> None:
         """Update smoothed RX/TX per-second rates (EMA)."""
