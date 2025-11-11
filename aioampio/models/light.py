@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 import logging
 
-from .base import validate_percentage
+from .base import validate_numeric_value
 from .resource import ResourceTypes
 
 logger = logging.getLogger(__name__)
@@ -77,7 +77,9 @@ class Light:
         for color in ["red", "green", "blue", "white"]:
             if color in data:
                 try:
-                    new_value = validate_percentage(data[color])
+                    new_value = validate_numeric_value(
+                        data[color], min_val=0, max_val=255
+                    )
                     old_value = self.state.get(color)
                     if old_value != new_value:
                         self.state[color] = new_value
@@ -99,7 +101,9 @@ class Light:
             return False
 
         try:
-            new_brightness = validate_percentage(data["value"])
+            new_brightness = validate_numeric_value(
+                data["value"], min_val=0, max_val=255
+            )
             old_brightness = self.state.get("brightness")
             if old_brightness != new_brightness:
                 self.state["brightness"] = new_brightness
