@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 
 from aioampio import AmpioBridge
-from aioampio.bridge import BridgeConfig
+from aioampio.bridge_config import BridgeConfig
 
 logging.basicConfig(
     level=logging.INFO,

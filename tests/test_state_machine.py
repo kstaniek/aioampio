@@ -1,6 +1,6 @@
-"""Tests for ConnectionState state machine (Phase 2.1)."""
+"""Tests for ConnectionState and StateTransition."""
 
-from aioampio.bridge import ConnectionState, StateTransition
+from aioampio.state_machine import ConnectionState, StateTransition
 
 
 class TestConnectionState:

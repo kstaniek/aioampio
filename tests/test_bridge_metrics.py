@@ -1,6 +1,6 @@
-"""Tests for BridgeMetrics dataclass (Phase 2.4)."""
+"""Tests for BridgeMetrics dataclass."""
 
-from aioampio.bridge import BridgeMetrics
+from aioampio.metrics import BridgeMetrics
 
 
 class TestBridgeMetricsCreation:

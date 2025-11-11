@@ -1,8 +1,8 @@
-"""Tests for BridgeConfig dataclass (Phase 2.2)."""
+"""Tests for BridgeConfig dataclass."""
 
 import pytest
 
-from aioampio.bridge import BridgeConfig
+from aioampio.bridge_config import BridgeConfig
 
 
 class TestBridgeConfigDefaults:
