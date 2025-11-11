@@ -2,10 +2,12 @@
 
 import asyncio
 from contextlib import suppress
+from enum import Enum, auto
 import logging
 import random
 import time
 from typing import Any
+import uuid
 
 
 import can
@@ -35,6 +37,59 @@ from .util import CanInterface, _discover_backends
 
 
 READ_TIMEOUT_S = 2.0
+
+
+class ConnectionState(Enum):
+    """Bridge connection state machine states."""
+
+    DISCONNECTED = auto()  # Initial state, no bus connection
+    CONNECTING = auto()  # Bus creation in progress
+    CONNECTED = auto()  # Active session, receiving data
+    RECONNECTING = auto()  # Triggered reconnect, teardown in progress
+    STOPPING = auto()  # Shutdown requested
+    STOPPED = auto()  # Final state, bridge stopped
+
+
+class StateTransition:
+    """Valid state transitions for the connection state machine."""
+
+    # Define valid state transitions
+    VALID_TRANSITIONS: dict[ConnectionState, set[ConnectionState]] = {
+        ConnectionState.DISCONNECTED: {
+            ConnectionState.CONNECTING,
+            ConnectionState.STOPPING,
+        },
+        ConnectionState.CONNECTING: {
+            ConnectionState.CONNECTED,
+            ConnectionState.DISCONNECTED,
+            ConnectionState.STOPPING,
+        },
+        ConnectionState.CONNECTED: {
+            ConnectionState.RECONNECTING,
+            ConnectionState.STOPPING,
+        },
+        ConnectionState.RECONNECTING: {
+            ConnectionState.DISCONNECTED,
+            ConnectionState.STOPPING,
+        },
+        ConnectionState.STOPPING: {
+            ConnectionState.STOPPED,
+        },
+        ConnectionState.STOPPED: set(),  # Terminal state
+    }
+
+    @classmethod
+    def is_valid(cls, from_state: ConnectionState, to_state: ConnectionState) -> bool:
+        """Check if a state transition is valid.
+
+        Args:
+            from_state: Current state
+            to_state: Target state
+
+        Returns:
+            True if transition is valid, False otherwise
+        """
+        return to_state in cls.VALID_TRANSITIONS.get(from_state, set())
 
 
 class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
@@ -85,6 +140,11 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         self._climates = ClimatesController(self)
 
         self._whitelist: set[int] = set()
+
+        # State machine
+        self._connection_state = ConnectionState.DISCONNECTED
+        self._state_lock = asyncio.Lock()
+        self._session_id: str | None = None
 
         self._transport: asyncio.Task[None] | None = None
         self._bus: can.BusABC | None = None
@@ -154,13 +214,16 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             self.logger.debug("Bridge already running")
             return
         self._stop_event.clear()
+        await self._transition_state(ConnectionState.CONNECTING)
         self._transport = asyncio.create_task(self._run())
         self.logger.info("Bridge started")
 
     async def stop(self) -> None:
         """Stop the bridge."""
+        await self._transition_state(ConnectionState.STOPPING)
         self._stop_event.set()
         if self._transport is None:
+            await self._transition_state(ConnectionState.STOPPED)
             return
         self._transport.cancel()
         with suppress(asyncio.CancelledError):
@@ -170,7 +233,43 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             with suppress(Exception):
                 self._bus.shutdown()
             self._bus = None
+        await self._transition_state(ConnectionState.STOPPED)
         self.logger.info("Bridge stopped")
+
+    # --- State Machine Methods ----------------------------------------------
+
+    async def _transition_state(self, new_state: ConnectionState) -> None:
+        """Thread-safe state transition with logging and validation.
+
+        Args:
+            new_state: Target state to transition to
+
+        Raises:
+            ValueError: If transition is not valid
+        """
+        async with self._state_lock:
+            old_state = self._connection_state
+
+            # Validate transition
+            if not StateTransition.is_valid(old_state, new_state):
+                self.logger.error(
+                    "Invalid state transition: %s -> %s",
+                    old_state.name,
+                    new_state.name,
+                )
+                raise ValueError(
+                    f"Invalid state transition: {old_state.name} -> {new_state.name}"
+                )
+
+            self._connection_state = new_state
+            self.logger.debug(
+                "State transition: %s -> %s", old_state.name, new_state.name
+            )
+
+    @property
+    def connection_state(self) -> ConnectionState:
+        """Return current connection state."""
+        return self._connection_state
 
     # --- Public API: control & status --------------------------------------
 
@@ -185,12 +284,15 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
     @property
     def connected(self) -> bool:
         """Return connection status."""
-        return self._bus is not None and not self._stop_event.is_set()
+        return self._connection_state == ConnectionState.CONNECTED
 
     @property
     def reconnecting(self) -> bool:
         """Return True if a reconnect is pending/ongoing."""
-        return self._reconnect_now.is_set()
+        return self._connection_state in (
+            ConnectionState.RECONNECTING,
+            ConnectionState.CONNECTING,
+        )
 
     def trigger_reconnect(self, reason: str = "manual") -> None:
         """Trigger a reconnect as soon as possible."""
@@ -277,6 +379,8 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         now = time.monotonic()
         return {
             "connected": self.connected,
+            "connection_state": self._connection_state.name,
+            "session_id": self._session_id,
             "reconnects": self._reconnects,
             "rx_total": self._rx_total,
             "tx_total": self._tx_total,
@@ -388,13 +492,17 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
     # --- Internal main loop -------------------------------------------------
 
-    async def _run(self) -> None:  # pylint: disable=too-many-statements
+    async def _run(self) -> None:  # pylint: disable=too-many-statements,too-many-branches
         """Main bridge loop: connect, run session, reconnect on failure."""
         attempt = 0
         had_rx = False
         while not self._stop_event.is_set():
             bus: can.BusABC | None = None
             try:
+                # Transition to CONNECTING state
+                if self._connection_state == ConnectionState.DISCONNECTED:
+                    await self._transition_state(ConnectionState.CONNECTING)
+
                 # Build connection parameters each attempt (in case they change)
                 interface, channel, kwargs = (
                     self._interface,
@@ -417,6 +525,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
                 if bus is None:
                     self._reconnects += 1
+                    await self._transition_state(ConnectionState.DISCONNECTED)
                     if self._stop_event.is_set():
                         break
                     delay = self._next_backoff(attempt)
@@ -426,6 +535,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
                     continue
 
                 self.logger.info("Connected (iface=%s, channel=%s)", interface, channel)
+                await self._transition_state(ConnectionState.CONNECTED)
 
                 had_rx = await self._run_session(bus)
 
@@ -454,6 +564,9 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
             if self._stop_event.is_set():
                 break
+
+            # Transition to DISCONNECTED after session ends
+            await self._transition_state(ConnectionState.DISCONNECTED)
 
             # Compute backoff after a completed session
             self._reconnects += 1
@@ -688,14 +801,26 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
     def _reset_connect_state(self) -> None:
         """Reset connection state on connect."""
+        self._session_id = str(uuid.uuid4())[:8]
         self._connected_evt.set()
         self._reconnect_now.clear()
         self._connected_since_mono = time.monotonic()
+        self.logger.info("Session started: %s", self._session_id)
 
     def _clear_connect_state(self) -> None:
         """Clear connection state on disconnect."""
+        if self._session_id:
+            uptime = self.connection_uptime_s or 0.0
+            self.logger.info(
+                "Session ended: %s (uptime: %.1fs, rx: %d, tx: %d)",
+                self._session_id,
+                uptime,
+                self._rx_total,
+                self._tx_total,
+            )
         self._connected_evt.clear()
         self._connected_since_mono = None
+        self._session_id = None
 
     def _teardown_session(
         self, bus: can.BusABC | None, notifier: can.Notifier | None
