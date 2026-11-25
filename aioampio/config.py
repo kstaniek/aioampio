@@ -147,9 +147,7 @@ class AmpioConfig:
                     if not sid.startswith(prefix):
                         sid = prefix + sid
                     subitem.id = sid
-                    item_obj = dataclass_from_dict(
-                        cls, subitem.model_dump(exclude_unset=True)
-                    )
+                    item_obj = dataclass_from_dict(cls, subitem.model_dump())
                     item_obj.owner = device.id
                     self._items[item_obj.id] = item_obj
         self._validate_uniqueness()
