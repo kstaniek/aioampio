@@ -62,23 +62,18 @@ class Valve:
             logger.debug("Valve %s: Could not extract entity index from topic", self.id)
             return False
 
+        position_update = "value" in data and entity_idx in self._valve_position_indices
+        motion_update = "binout" in topic and "state" in data
+        if not position_update and not motion_update:
+            return False
         changed = False
 
         try:
-            # Update position
-            if "value" in data and entity_idx in self._valve_position_indices:
-                try:
-                    position = validate_percentage(data["value"])
-                    if self.valve.position != position:
-                        self.valve.position = position
-                        changed = True
-                except ValueError as e:
-                    logger.warning(
-                        "Valve %s: Invalid position value '%s': %s",
-                        self.id,
-                        data["value"],
-                        e,
-                    )
+            if position_update:
+                position = validate_percentage(data["value"])
+                if self.valve.position != position:
+                    self.valve.position = position
+                    changed = True
 
             # Update motion state
             if "binout" in topic and "state" in data:

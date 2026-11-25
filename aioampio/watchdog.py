@@ -255,7 +255,9 @@ class IdleWatchdog(Watchdog):
             True if idle timeout exceeded
         """
         # Calculate base time: last RX or connect time
-        base = last_rx or connected_since or now
+        base = last_rx if last_rx is not None else connected_since
+        if base is None:
+            return False
         idle = max(0.0, now - base)
 
         if idle >= self.timeout_s:

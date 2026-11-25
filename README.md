@@ -2,6 +2,19 @@
 
 An asyncio library for Ampio devices using python-can. Requires Python 3.12 or newer; Python 3.12, 3.13, and 3.14 are tested in CI.
 
+## Library boundary
+
+`aioampio` is a standalone asyncio library. It owns CAN transport, Ampio frame
+encoding and decoding, resource models, state notifications, and commands.
+It must run without Home Assistant installed and must not import Home Assistant
+or depend on its event bus, registries, entities, or configuration entries.
+
+Consumer integrations adapt the public library API to their own lifecycle and
+state model. Home Assistant entities, service mappings, fixtures, and compatibility
+tests belong in `hacs-ampio`, not in this package. Library tests use synthetic CAN
+frames and callbacks; `tests/test_library_boundary.py` additionally blocks Home
+Assistant imports in a fresh interpreter while initializing the library.
+
 ## Version 2 beta
 
 Version 2 changes the constructor, metrics, and alarm-state APIs. Test the beta in a development environment before updating an integration. The published Ampio Home Assistant integration remains pinned to the stable 1.0.x library until its version 2 validation is complete.
