@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.0b2 (pre-release)
+
+- Preserve per-topic notification order with asynchronous subscribers, including
+  callback feedback and cancellation; allow unrelated topics to notify concurrently.
+- Keep brightness and RGB channel values as integers so received values can be
+  reused safely in commands; reject non-finite numeric values and invalid positions.
+- Validate optional watchdog timeouts and handle a valid zero connection timestamp.
+- Use one frame processor for bridge decoding, ignore CAN error frames, and remove
+  the unused duplicate connection manager.
+- Add standalone watchdog, state-store, model, wire-command, and frame regression
+  tests. Enforce that the library initializes without Home Assistant imports.
+
+Home Assistant adapters and compatibility tests remain in `hacs-ampio`. This
+beta retains the version 2 API changes described below; stable integrations
+should continue to use the 1.0.x library.
+
 ## 2.0.0b1 (pre-release)
 
 - Serialize start and stop, allow restarting a stopped instance, and preserve valid connection state during reconnect and setup failures.

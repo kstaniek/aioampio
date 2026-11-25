@@ -5,6 +5,7 @@ to ensure consistency and type safety.
 """
 
 from typing import Any, Protocol
+import math
 
 from .resource import ResourceTypes
 
@@ -72,12 +73,22 @@ def validate_numeric_value(
     except (TypeError, ValueError) as e:
         raise ValueError(f"Cannot convert value to float: {value}") from e
 
+    if not math.isfinite(num_value):
+        raise ValueError("Numeric values must be finite")
     if min_val is not None and num_value < min_val:
         raise ValueError(f"Value {num_value} is below minimum {min_val}")
     if max_val is not None and num_value > max_val:
         raise ValueError(f"Value {num_value} is above maximum {max_val}")
 
     return num_value
+
+
+def validate_byte_value(value: Any) -> int:
+    """Validate an integer CAN channel value between 0 and 255."""
+    number = validate_numeric_value(value, min_val=0, max_val=255)
+    if not number.is_integer():
+        raise ValueError("CAN channel values must be whole numbers")
+    return int(number)
 
 
 def validate_percentage(value: Any) -> int:

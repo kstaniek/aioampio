@@ -204,6 +204,9 @@ class FrameProcessor:
             msg: CAN message to process
         """
         # Validate frame format
+        if msg.is_error_frame:
+            self.logger.debug("Ignoring CAN error frame: %s", msg)
+            return
         if not msg.is_extended_id:
             self.logger.debug("Ignoring non-extended CAN frame: %s", msg)
             return

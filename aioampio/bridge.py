@@ -16,7 +16,7 @@ from aioampio.codec import ampio as _ampio  # noqa: F401
 from aioampio.config import AmpioConfig
 from aioampio.bridge_config import BridgeConfig
 from aioampio.metrics import BridgeMetrics, BridgeMetricsDict
-from aioampio.rx_workers import RxWorkerManager
+from aioampio.rx_workers import FrameProcessor, RxWorkerManager
 from aioampio.state_machine import ConnectionState, StateTransition
 from aioampio.tx_handler import TxHandler
 from aioampio.watchdog import (
@@ -39,8 +39,6 @@ from aioampio.controllers.valves import ValvesController
 from .controllers.lights import LightsController
 from .controllers.devices import DevicesController
 
-from .codec.registry import registry
-from .codec.base import CANFrame
 from .state_store import StateStore
 from .helpers.rx_reader import BoundedAsyncCanReader
 from .util import CanInterface, _discover_backends
@@ -79,6 +77,9 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         self._config = AmpioConfig(self)
 
         self.state_store = StateStore(self)
+        self._frame_processor = FrameProcessor(
+            self.logger, self.state_store.apply_message
+        )
 
         self._devices = DevicesController(self)
         self._lights = LightsController(self)
@@ -651,41 +652,9 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         self._rx_total += 1
         self._last_rx_mono = time.monotonic()
 
-    async def _on_frame(self, msg: can.Message) -> None:  # pylint: disable=too-many-return-statements
-        """Handle incoming CAN frame."""
-        if not msg.is_extended_id:
-            self.logger.debug("Ignoring non-extended CAN frame: %s", msg)
-            return
-        if msg.is_remote_frame:
-            self.logger.debug("Ignoring remote CAN frame: %s", msg)
-            return
-        if msg.dlc != len(msg.data):
-            self.logger.warning("Ignoring CAN frame with invalid DLC: %s", msg)
-            return
-        if not msg.data:
-            self.logger.debug("Ignoring empty CAN frame: %s", msg)
-            return
-        frame = CANFrame(can_id=msg.arbitration_id, data=memoryview(msg.data))
-        try:
-            msgs = registry().decode(frame)
-        except ValueError as e:
-            # Invalid frame data format
-            self.logger.warning("Invalid frame data id=0x%X: %s", msg.arbitration_id, e)
-            return
-        except KeyError as e:
-            # No decoder registered for this frame type
-            self.logger.debug("No decoder for frame id=0x%X: %s", msg.arbitration_id, e)
-            return
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            # Unexpected decoder error - log with full context
-            self.logger.exception(
-                "Decoder failed for frame id=0x%X: %s", msg.arbitration_id, e
-            )
-            return
-        if not msgs:
-            return
-        for m in msgs:
-            await self.state_store.apply_message(m)
+    async def _on_frame(self, msg: can.Message) -> None:
+        """Validate and decode a frame through the shared processor."""
+        await self._frame_processor.process(msg)
 
     # --- Internal connection/watchdog helpers -------------------------------
 

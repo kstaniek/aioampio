@@ -64,12 +64,19 @@ class Cover:
             logger.debug("Cover %s: Could not extract entity index from topic", self.id)
             return False
 
+        position_update = "value" in data and (
+            entity_idx in self._cover_position_indices
+            or entity_idx in self._tilt_position_indices
+        )
+        motion_update = "binout" in topic and "state" in data
+        if not position_update and not motion_update:
+            return False
         changed = False
 
         try:
-            # Update positions
-            if "value" in data:
-                changed |= self._update_position(entity_idx, data["value"])
+            if position_update:
+                position = validate_percentage(data["value"])
+                changed |= self._update_position(entity_idx, position)
 
             # Update motion state
             if "binout" in topic and "state" in data:
@@ -89,16 +96,8 @@ class Cover:
 
         return changed
 
-    def _update_position(self, entity_idx: int, value: Any) -> bool:
+    def _update_position(self, entity_idx: int, position: int) -> bool:
         """Update position based on entity index."""
-        try:
-            position = validate_percentage(value)
-        except ValueError as e:
-            logger.warning(
-                "Cover %s: Invalid position value '%s': %s", self.id, value, e
-            )
-            return False
-
         if entity_idx in self._cover_position_indices:
             if self.cover.position != position:
                 self.cover.position = position

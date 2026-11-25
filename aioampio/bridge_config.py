@@ -34,6 +34,7 @@ Raises:
 """
 
 from dataclasses import dataclass
+import math
 from typing import ClassVar
 
 
@@ -115,20 +116,23 @@ class BridgeConfig:
         """Validate configuration relationships."""
         errors = []
 
-        # Validate timeouts are positive
-        if self.read_timeout_s <= 0:
-            errors.append(f"read_timeout_s must be > 0, got {self.read_timeout_s}")
-
-        if self.reconnect_initial_s <= 0:
-            errors.append(
-                f"reconnect_initial_s must be > 0, got {self.reconnect_initial_s}"
-            )
-
-        if self.reconnect_max_s <= 0:
-            errors.append(f"reconnect_max_s must be > 0, got {self.reconnect_max_s}")
-
-        if self.tx_timeout_s <= 0:
-            errors.append(f"tx_timeout_s must be > 0, got {self.tx_timeout_s}")
+        for name in (
+            "read_timeout_s",
+            "reconnect_initial_s",
+            "reconnect_max_s",
+            "tx_timeout_s",
+        ):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value <= 0:
+                errors.append(f"{name} must be > 0 and finite, got {value}")
+        for name in (
+            "idle_reconnect_s",
+            "rx_gap_reconnect_s",
+            "max_no_rx_after_connect_s",
+        ):
+            value = getattr(self, name)
+            if value is not None and (not math.isfinite(value) or value <= 0):
+                errors.append(f"{name} must be > 0 and finite, or None, got {value}")
 
         # Validate reconnect relationship
         if self.reconnect_initial_s > self.reconnect_max_s:
