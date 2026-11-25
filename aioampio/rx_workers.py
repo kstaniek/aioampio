@@ -25,8 +25,8 @@ import can
 from aioampio.codec.base import CANFrame
 from aioampio.codec.registry import registry
 
-_MAX_BATCH_SIZE = 16
-_TIME_SLICE_S = 0.01
+MAX_BATCH_SIZE = 16
+TIME_SLICE_S = 0.01
 
 
 class RxWorkerManager:
@@ -122,8 +122,8 @@ class RxWorkerManager:
 
             batch_size += 1
             if (
-                batch_size >= _MAX_BATCH_SIZE
-                or time.monotonic() - batch_started >= _TIME_SLICE_S
+                batch_size >= MAX_BATCH_SIZE
+                or time.monotonic() - batch_started >= TIME_SLICE_S
             ):
                 # A queued get and an async frame handler need not suspend.
                 await asyncio.sleep(0)
@@ -242,5 +242,15 @@ class FrameProcessor:
         # Dispatch decoded messages
         if not msgs:
             return
+        batch_size = 0
+        batch_started = time.monotonic()
         for m in msgs:
             await self._on_decoded_message(m)
+            batch_size += 1
+            if (
+                batch_size >= MAX_BATCH_SIZE
+                or time.monotonic() - batch_started >= TIME_SLICE_S
+            ):
+                await asyncio.sleep(0)
+                batch_size = 0
+                batch_started = time.monotonic()

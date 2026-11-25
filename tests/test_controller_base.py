@@ -219,3 +219,39 @@ def test_unknown_event_is_ignored(ctrl: DummyController):
     loop = asyncio.get_event_loop()
     loop.run_until_complete(ctrl._handle_event(unknown_event_key, {"id": "x"}))  # type: ignore[arg-type]
     assert events == []
+
+
+async def test_store_updates_resource_before_returning() -> None:
+    """Awaiting a public state update must also update its controller resource."""
+    from aioampio import AmpioBridge
+
+    bridge = AmpioBridge(
+        {
+            "devices": [
+                {
+                    "can_id": 291,
+                    "model": 4,
+                    "name": "Test",
+                    "lights": [
+                        {"id": "light1", "name": "Dimmer", "states": ["aout.1"]}
+                    ],
+                }
+            ]
+        },
+        interface="virtual",
+        channel="controller-test",
+    )
+    await bridge.initialize()
+    resource = bridge.lights["00000123_light1"]
+    seen = []
+    bridge.lights.subscribe(
+        lambda _event, item: seen.append(item.state["brightness"]),
+        event_filter=EventType.RESOURCE_UPDATED,
+    )
+    await bridge.state_store.set("00000123.aout.1", {"value": 128})
+    assert resource.state["brightness"] == 128
+    assert seen == [128]
+    await bridge.state_store.set("00000123.aout.1", {"value": 64})
+    assert resource.state["brightness"] == 64
+    assert seen == [128, 64]
+    await bridge.stop()

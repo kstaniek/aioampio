@@ -16,7 +16,12 @@ from aioampio.codec import ampio as _ampio  # noqa: F401
 from aioampio.config import AmpioConfig
 from aioampio.bridge_config import BridgeConfig
 from aioampio.metrics import BridgeMetrics, BridgeMetricsDict
-from aioampio.rx_workers import FrameProcessor, RxWorkerManager
+from aioampio.rx_workers import (
+    MAX_BATCH_SIZE,
+    TIME_SLICE_S,
+    FrameProcessor,
+    RxWorkerManager,
+)
 from aioampio.state_machine import ConnectionState, StateTransition
 from aioampio.tx_handler import TxHandler
 from aioampio.watchdog import (
@@ -574,6 +579,8 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
                 self.logger.info(
                     "Connected (iface=%s, channel=%s)", self._interface, self._channel
                 )
+            batch_size = 0
+            batch_started = time.monotonic()
             while True:
                 if self._should_reconnect():
                     self.logger.info("Reconnect requested; leaving reader loop")
@@ -594,23 +601,16 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
                     )
                     continue
 
-                try:
-                    self._proc_queue.put_nowait(msg)
-                    self._rx_proc_queued += 1
-                except asyncio.QueueFull:
-                    self._rx_backpressure_drop += 1
-                    # Log periodically to avoid log spam
-                    drops_since_log = (
-                        self._rx_backpressure_drop - self._rx_backpressure_drop_logged
-                    )
-                    if drops_since_log >= self._bridge_config.queue_full_log_interval:
-                        self.logger.warning(
-                            "RX queue full; dropped %d messages (total: %d, queue depth: %d/1000)",
-                            drops_since_log,
-                            self._rx_backpressure_drop,
-                            self._proc_queue.qsize(),
-                        )
-                        self._rx_backpressure_drop_logged = self._rx_backpressure_drop
+                self._queue_received_frame(msg)
+
+                batch_size += 1
+                if (
+                    batch_size >= MAX_BATCH_SIZE
+                    or time.monotonic() - batch_started >= TIME_SLICE_S
+                ):
+                    await asyncio.sleep(0)
+                    batch_size = 0
+                    batch_started = time.monotonic()
         finally:
             self._connected_evt.clear()
             self._reconnect_now.set()
@@ -625,6 +625,26 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
                     with suppress(asyncio.QueueEmpty):
                         self._proc_queue.get_nowait()
         return had_rx
+
+    def _queue_received_frame(self, msg: can.Message) -> None:
+        """Queue one received frame and account for processing backpressure."""
+        try:
+            self._proc_queue.put_nowait(msg)
+            self._rx_proc_queued += 1
+        except asyncio.QueueFull:
+            self._rx_backpressure_drop += 1
+            # Log periodically to avoid log spam
+            drops_since_log = (
+                self._rx_backpressure_drop - self._rx_backpressure_drop_logged
+            )
+            if drops_since_log >= self._bridge_config.queue_full_log_interval:
+                self.logger.warning(
+                    "RX queue full; dropped %d messages (total: %d, queue depth: %d/1000)",
+                    drops_since_log,
+                    self._rx_backpressure_drop,
+                    self._proc_queue.qsize(),
+                )
+                self._rx_backpressure_drop_logged = self._rx_backpressure_drop
 
     # --- Internal RX path ---------------------------------------------------
 

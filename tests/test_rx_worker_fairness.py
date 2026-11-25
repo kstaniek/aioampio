@@ -126,3 +126,58 @@ async def test_stop_event_is_respected(monkeypatch: pytest.MonkeyPatch) -> None:
         assert bridge._proc_queue.qsize() == 79
     finally:
         await bridge._stop_rx_workers()
+
+
+@pytest.mark.parametrize(("frame_time", "expected_batch"), [(0.0, 16), (0.006, 2)])
+async def test_transport_burst_yields_before_draining_reader(
+    monkeypatch: pytest.MonkeyPatch, frame_time: float, expected_batch: int
+) -> None:
+    """Give other tasks a turn while moving a ready CAN backlog into processing."""
+    from unittest.mock import AsyncMock, Mock
+
+    from aioampio import bridge as bridge_module
+    from aioampio.state_machine import ConnectionState
+
+    bridge = make_bridge()
+    bridge._connection_state = ConnectionState.CONNECTING
+    now = 0.0
+    received = []
+    heartbeat = []
+    finished = asyncio.Event()
+
+    class Reader:
+        listener = Mock()
+
+        def __init__(self, **_kwargs: object) -> None:
+            self.messages = asyncio.Queue()
+            for identifier in range(80):
+                self.messages.put_nowait(can.Message(arbitration_id=identifier))
+
+        async def get(self) -> can.Message:
+            nonlocal now
+            msg = await self.messages.get()
+            now += frame_time
+            received.append(msg.arbitration_id)
+            if len(received) == 80:
+                finished.set()
+            return msg
+
+    monkeypatch.setattr(bridge_module, "BoundedAsyncCanReader", Reader)
+    monkeypatch.setattr(bridge_module, "time", SimpleNamespace(monotonic=lambda: now))
+    monkeypatch.setattr(can, "Notifier", Mock())
+    monkeypatch.setattr(bridge, "_start_rx_workers", Mock())
+    monkeypatch.setattr(bridge, "_stop_rx_workers", AsyncMock())
+    monkeypatch.setattr(bridge, "_apply_filters", Mock())
+    task = asyncio.create_task(bridge._run_session(Mock(spec=can.BusABC)))
+    asyncio.get_running_loop().call_soon(lambda: heartbeat.append(len(received)))
+    try:
+        await asyncio.wait_for(finished.wait(), 2)
+        assert heartbeat == [expected_batch]
+        assert received == list(range(80))
+        assert [msg.arbitration_id for msg in bridge._proc_queue._queue] == received
+        assert bridge.metrics.rx_proc_queued == 80
+        assert bridge.metrics.rx_dropped == 0
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
