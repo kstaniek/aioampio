@@ -66,3 +66,39 @@ async def test_decoder_error_does_not_prevent_next_frame(
     await bridge._on_frame(frame)
     await bridge._on_frame(frame)
     assert bridge.state_store.get("a") is True
+
+
+@pytest.mark.parametrize(("message_time", "expected_batch"), [(0.0, 16), (0.006, 2)])
+async def test_one_frame_with_many_updates_yields(
+    monkeypatch: pytest.MonkeyPatch, message_time: float, expected_batch: int
+) -> None:
+    """A multi-topic CAN frame must not monopolize notification delivery."""
+    import asyncio
+    from types import SimpleNamespace
+
+    now = 0.0
+    seen = []
+    heartbeat = []
+    raw = CANFrame(123, memoryview(b"x"))
+    decoder = Mock()
+    decoder.decode.return_value = [
+        AmpioMessage(raw, value, str(value)) for value in range(48)
+    ]
+    monkeypatch.setattr(rx_workers, "registry", Mock(return_value=decoder))
+    monkeypatch.setattr(rx_workers, "time", SimpleNamespace(monotonic=lambda: now))
+
+    async def on_message(message: AmpioMessage) -> None:
+        nonlocal now
+        seen.append(message.payload)
+        now += message_time
+
+    processor = rx_workers.FrameProcessor(Mock(), on_message)
+    task = asyncio.create_task(
+        processor.process(
+            can.Message(arbitration_id=123, data=b"x", is_extended_id=True)
+        )
+    )
+    asyncio.get_running_loop().call_soon(lambda: heartbeat.append(len(seen)))
+    await asyncio.wait_for(task, 2)
+    assert heartbeat == [expected_batch]
+    assert seen == list(range(48))

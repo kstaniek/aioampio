@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.0.0b3 (pre-release)
+
+- Await controller state updates within state-store notifications instead of
+  creating a task for every topic change. Awaiting a state update now also
+  completes the resource update and synchronous subscriber notification.
+- Yield while transferring ready CAN frames and while dispatching decoded
+  messages from a single frame. Both stages share the receive worker limits:
+  16 items or 10 ms, checked between items.
+- Add regressions for resource update completion, transport backlog fairness,
+  and frames that decode into many topic updates.
+
+The library remains independent of Home Assistant. Physical command acceptance
+and the stable 2.0.0 release are deferred; this beta is for development testing.
+
 ## 2.0.0b2 (pre-release)
 
 - Preserve per-topic notification order with asynchronous subscribers, including
