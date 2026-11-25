@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Yield receive workers between bounded batches of queued CAN frames, allowing
+  other asyncio tasks and shutdown requests to run during bursts. Workers yield
+  after 16 frames or 10 ms of batch time, checked between frames, without dropping
+  or reordering frames.
+
 ## 1.0.1
 
 - Preserve validated configuration defaults when creating resources. Lights and
