@@ -74,7 +74,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         self._bus_kwargs: dict[str, Any] = dict(bus_kwargs or {})
         self._bridge_config = bridge_config or BridgeConfig()
 
-        self.logger = logging.getLogger(f"{__package__}[{self._channel}]")
+        self.logger = logging.getLogger(f"{__package__}.{self._channel}")
 
         self._config = AmpioConfig(self)
 

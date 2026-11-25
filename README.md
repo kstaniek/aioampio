@@ -53,6 +53,8 @@ For SocketCAN, use interface="socketcan" and channel="can0" without network argu
 
 CAN reception uses python-can's notifier thread. Decoding, state updates, and callbacks run on the asyncio event loop. RX workers yield between bounded batches. Blocking bus construction, transmission, and teardown run in executor threads.
 
+Configure the aioampio logger to control library messages. Bridge and controller loggers are its children, for example aioampio.can0 and aioampio.can0.light. Replace old aioampio[can0] logging overrides with aioampio or aioampio.can0.
+
 ## Command line
 
 The CLI validates configuration or starts a receive-only bridge. It does not send actuator commands.
