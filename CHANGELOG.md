@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased refactor
+## 2.0.0b1 (pre-release)
 
 - Serialize start and stop, allow restarting a stopped instance, and preserve valid connection state during reconnect and setup failures.
 - Carry forward cancellation-safe bus creation and bounded RX batches from the 1.0.x maintenance releases.
@@ -9,7 +9,11 @@
 - Accept the first RGB update when a light has an empty initial state.
 - Preserve validated resource defaults and restore mandatory test/lint gates before PyPI publication.
 
-The refactor retains its interface/channel constructor and structured metrics API. These API changes require a separate compatibility and release decision before promotion to main.
+- Update the CLI to use interface/channel arguments, preserve backend network defaults, and clean up on cancellation or initialization failure.
+- Declare the CLI YAML dependency and include the typing marker in distributions.
+- Keep bridge and controller loggers under the aioampio namespace so integration logging settings apply.
+
+Breaking changes: the constructor now requires interface/channel, metrics returns BridgeMetrics, and alarm state uses get_state(). See the migration guide in README.md. This beta is intended for development testing; stable Home Assistant installations should retain aioampio 1.0.x.
 
 ## 1.0.2
 
