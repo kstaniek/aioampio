@@ -17,12 +17,16 @@ Classes:
 import asyncio
 from contextlib import suppress
 import logging
+import time
 from typing import Any, Callable, Awaitable
 
 import can
 
 from aioampio.codec.base import CANFrame
 from aioampio.codec.registry import registry
+
+_MAX_BATCH_SIZE = 16
+_TIME_SLICE_S = 0.01
 
 
 class RxWorkerManager:
@@ -49,6 +53,7 @@ class RxWorkerManager:
         on_frame: Callable[[can.Message], Awaitable[None]],
         on_message_processed: Callable[[], None] | None = None,
         max_consecutive_errors: int = 10,
+        on_worker_failed: Callable[[], None] | None = None,
     ) -> None:
         """Initialize RX worker manager.
 
@@ -59,6 +64,7 @@ class RxWorkerManager:
             on_frame: Async callback to process decoded messages
             on_message_processed: Optional callback when RX message is processed
             max_consecutive_errors: Maximum consecutive errors before worker stops
+            on_worker_failed: Request session recovery after the error limit
         """
         self.logger = logger
         self._proc_queue = proc_queue
@@ -66,6 +72,7 @@ class RxWorkerManager:
         self._on_frame = on_frame
         self._on_message_processed = on_message_processed
         self._max_consecutive_errors = max_consecutive_errors
+        self._on_worker_failed = on_worker_failed
         self._workers: list[asyncio.Task] = []
 
     async def _worker(self, idx: int) -> None:
@@ -76,6 +83,8 @@ class RxWorkerManager:
         """
         self.logger.debug("RX worker %d started", idx)
         consecutive_errors = 0
+        batch_size = 0
+        batch_started = time.monotonic()
 
         while not self._stop_event.is_set():
             try:
@@ -107,7 +116,19 @@ class RxWorkerManager:
                         idx,
                         consecutive_errors,
                     )
+                    if self._on_worker_failed:
+                        self._on_worker_failed()
                     break
+
+            batch_size += 1
+            if (
+                batch_size >= _MAX_BATCH_SIZE
+                or time.monotonic() - batch_started >= _TIME_SLICE_S
+            ):
+                # A queued get and an async frame handler need not suspend.
+                await asyncio.sleep(0)
+                batch_size = 0
+                batch_started = time.monotonic()
 
         self.logger.debug("RX worker %d stopped", idx)
 

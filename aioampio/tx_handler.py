@@ -15,6 +15,7 @@ Classes:
 """
 
 import asyncio
+from contextlib import suppress
 import logging
 from typing import Callable
 
@@ -43,6 +44,7 @@ class TxHandler:
         reconnect_event: asyncio.Event,
         tx_timeout_s: float,
         tx_error_threshold: int,
+        get_bus: Callable[[], can.BusABC | None],
         on_tx_success: Callable[[], None] | None = None,
         on_tx_error: Callable[[Exception], None] | None = None,
     ) -> None:
@@ -54,6 +56,7 @@ class TxHandler:
             reconnect_event: Event to set on persistent errors
             tx_timeout_s: Timeout for send operations (seconds)
             tx_error_threshold: Consecutive errors before triggering reconnect
+            get_bus: Read the current bus while holding the shared bus lock
             on_tx_success: Optional callback called on successful transmission
             on_tx_error: Optional callback called on transmission error
         """
@@ -62,17 +65,15 @@ class TxHandler:
         self._reconnect_event = reconnect_event
         self._tx_timeout_s = tx_timeout_s
         self._tx_error_threshold = tx_error_threshold
+        self._get_bus = get_bus
         self._on_tx_success = on_tx_success
         self._on_tx_error = on_tx_error
         self._tx_error_streak = 0
 
-    async def send(
-        self, bus: can.BusABC | None, can_id: int, data: bytes | memoryview
-    ) -> bool:
+    async def send(self, can_id: int, data: bytes | memoryview) -> bool:
         """Send a CAN message.
 
         Args:
-            bus: CAN bus to send on (None if disconnected)
             can_id: CAN arbitration ID (29-bit extended)
             data: Frame payload (max 8 bytes for CAN 2.0)
 
@@ -90,6 +91,9 @@ class TxHandler:
 
         # Lock-protected bus access to prevent TOCTOU race condition
         async with self._bus_lock:
+            if self._reconnect_event.is_set():
+                return False
+            bus = self._get_bus()
             if bus is None:
                 self.logger.debug("TX dropped; bus not connected")
                 return False
@@ -102,7 +106,14 @@ class TxHandler:
             )
             loop = asyncio.get_running_loop()
             try:
-                await loop.run_in_executor(None, bus.send, msg, self._tx_timeout_s)
+                task = loop.run_in_executor(None, bus.send, msg, self._tx_timeout_s)
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    # Cancellation cannot stop an executor send using this bus.
+                    with suppress(Exception):
+                        await task
+                    raise
                 self._tx_error_streak = 0  # Reset on success
                 self.logger.debug("TX id=0x%X len=%d", can_id, len(msg.data))
                 if self._on_tx_success:
