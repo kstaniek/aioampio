@@ -373,11 +373,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
                     )
 
                 try:
-                    bus = can.Bus(
-                        interface=interface,
-                        channel=channel,
-                        **kwargs,
-                    )
+                    bus = await self._create_bus(interface, channel, kwargs)
                 except can.CanError as e:  # type: ignore[attr-defined]
                     self.logger.warning("Connect failed: %s", e)
                     bus = None
@@ -417,6 +413,22 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             attempt += 1
             self.logger.info("Reconnecting to CAN bus in %.1f seconds", delay)
             await asyncio.sleep(delay)
+
+    async def _create_bus(
+        self, interface: str, channel: str, kwargs: dict[str, Any]
+    ) -> can.BusABC:
+        """Create the bus off-loop and close a late connection after cancellation."""
+        task = asyncio.create_task(
+            asyncio.to_thread(can.Bus, interface=interface, channel=channel, **kwargs)
+        )
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # The worker cannot be cancelled; wait for it to release its resources.
+            with suppress(Exception):
+                bus = await task
+                await asyncio.to_thread(bus.shutdown)
+            raise
 
     def _resolve_bus_params(
         self, host: str, port: int
