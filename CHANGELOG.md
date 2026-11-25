@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.2
 
 - Yield receive workers between bounded batches of queued CAN frames, allowing
   other asyncio tasks and shutdown requests to run during bursts. Workers yield
