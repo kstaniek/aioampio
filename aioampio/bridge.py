@@ -35,6 +35,8 @@ from .util import CanInterface, _discover_backends
 
 
 READ_TIMEOUT_S = 2.0
+_RX_WORKER_MAX_BATCH_SIZE = 16
+_RX_WORKER_TIME_SLICE_S = 0.01
 
 
 class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
@@ -477,6 +479,8 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
     def _start_rx_workers(self, n: int = 1) -> None:
         async def worker(idx: int) -> None:
+            batch_size = 0
+            batch_started = time.monotonic()
             while not self._stop_event.is_set():
                 try:
                     msg = await self._proc_queue.get()
@@ -490,6 +494,16 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
                     raise
                 except Exception:  # pylint: disable=broad-exception-caught
                     self.logger.exception("RX worker %d failed", idx)
+
+                batch_size += 1
+                if (
+                    batch_size >= _RX_WORKER_MAX_BATCH_SIZE
+                    or time.monotonic() - batch_started >= _RX_WORKER_TIME_SLICE_S
+                ):
+                    # Queue.get() need not suspend while frames are already queued.
+                    await asyncio.sleep(0)
+                    batch_size = 0
+                    batch_started = time.monotonic()
 
         self._rx_workers = [asyncio.create_task(worker(i)) for i in range(n)]
 
