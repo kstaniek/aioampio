@@ -43,10 +43,10 @@ class ConnectionState(Enum):
         CONNECTED: Active session with data flow
         RECONNECTING: Triggered reconnect, teardown in progress
         STOPPING: Graceful shutdown requested
-        STOPPED: Final terminal state, bridge completely stopped
+        STOPPED: Bridge completely stopped; it can be started again
 
     Note:
-        STOPPED is a terminal state with no outgoing transitions.
+        A stopped bridge can begin a new connection lifecycle.
     """
 
     DISCONNECTED = auto()  # Initial state, no bus connection
@@ -54,7 +54,7 @@ class ConnectionState(Enum):
     CONNECTED = auto()  # Active session, receiving data
     RECONNECTING = auto()  # Triggered reconnect, teardown in progress
     STOPPING = auto()  # Shutdown requested
-    STOPPED = auto()  # Final state, bridge stopped
+    STOPPED = auto()  # Bridge stopped
 
 
 class StateTransition:
@@ -82,7 +82,7 @@ class StateTransition:
         ConnectionState.STOPPING: {
             ConnectionState.STOPPED,
         },
-        ConnectionState.STOPPED: set(),  # Terminal state
+        ConnectionState.STOPPED: {ConnectionState.CONNECTING},
     }
 
     @classmethod

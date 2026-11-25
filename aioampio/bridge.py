@@ -102,7 +102,9 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
         self._transport: asyncio.Task[None] | None = None
         self._bus: can.BusABC | None = None
-        self._bus_lock = asyncio.Lock()  # Protect bus access from race conditions
+        self._bus_lock = asyncio.Lock()
+        self._lifecycle_lock = asyncio.Lock()
+        self._reconnect_now = asyncio.Event()
         self._stop_event: asyncio.Event = asyncio.Event()
 
         self._proc_queue: asyncio.Queue[can.Message] = asyncio.Queue(
@@ -113,20 +115,19 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         self._tx_handler = TxHandler(
             logger=self.logger,
             bus_lock=self._bus_lock,
-            reconnect_event=asyncio.Event(),  # Will be set to self._reconnect_now after creation
+            reconnect_event=self._reconnect_now,
             tx_timeout_s=self._bridge_config.tx_timeout_s,
             tx_error_threshold=self._bridge_config.tx_error_reconnect_threshold,
+            get_bus=lambda: self._bus,
+            on_tx_success=self._on_tx_success,
+            on_tx_error=self._on_tx_error,
         )
 
         # RX worker manager for message processing
         self._rx_worker_manager: RxWorkerManager | None = None
 
-        self._reconnect_now: asyncio.Event = asyncio.Event()
         self._connected_since_mono: float | None = None
         self._connected_evt = asyncio.Event()
-
-        # Update TX handler with the actual reconnect event and callbacks
-        self._tx_handler._reconnect_event = self._reconnect_now
 
         # Watchdog manager
         self._watchdog_manager = WatchdogManager()
@@ -152,10 +153,6 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
         # Queue full logging (prevent log spam)
         self._rx_backpressure_drop_logged = 0
-
-        # Set TX handler callbacks for metrics tracking
-        self._tx_handler._on_tx_success = self._on_tx_success
-        self._tx_handler._on_tx_error = self._on_tx_error
 
     def _setup_watchdogs(self) -> None:
         """Set up watchdog timers based on configuration."""
@@ -212,31 +209,47 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         )
 
     async def start(self) -> None:
-        """Start the bridge."""
-        if self._transport and not self._transport.done():
-            self.logger.debug("Bridge already running")
-            return
-        self._stop_event.clear()
-        await self._transition_state(ConnectionState.CONNECTING)
-        self._transport = asyncio.create_task(self._run())
-        self.logger.info("Bridge started")
+        """Start a new connection lifecycle, unless one is already running."""
+        async with self._lifecycle_lock:
+            if self._transport and not self._transport.done():
+                return
+            self._stop_event.clear()
+            self._reconnect_now.clear()
+            await self._transition_state(ConnectionState.CONNECTING)
+            self._transport = asyncio.create_task(self._run())
+            self.logger.info("Bridge started")
 
     async def stop(self) -> None:
-        """Stop the bridge."""
+        """Stop once and finish resource cleanup even if the caller is cancelled."""
+        async with self._lifecycle_lock:
+            if self._connection_state == ConnectionState.STOPPED:
+                return
+            task = asyncio.create_task(self._stop_transport())
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                await task
+                raise
+
+    async def _stop_transport(self) -> None:
+        """Cancel the connection task and release all session resources."""
         await self._transition_state(ConnectionState.STOPPING)
         self._stop_event.set()
-        if self._transport is None:
+        self._reconnect_now.set()
+        try:
+            if self._transport is not None:
+                self._transport.cancel()
+                with suppress(asyncio.CancelledError):
+                    await self._transport
+        except Exception:  # pylint: disable=broad-exception-caught
+            self.logger.exception("Bridge transport failed during shutdown")
+        finally:
+            await self._stop_rx_workers()
+            if self._bus is not None:
+                await self._teardown_session(self._bus, None)
+            self._clear_connect_state()
+            self._transport = None
             await self._transition_state(ConnectionState.STOPPED)
-            return
-        self._transport.cancel()
-        with suppress(asyncio.CancelledError):
-            await self._transport
-        self._transport = None
-        if self._bus is not None:
-            with suppress(Exception):
-                self._bus.shutdown()
-            self._bus = None
-        await self._transition_state(ConnectionState.STOPPED)
         self.logger.info("Bridge stopped")
 
     # --- State Machine Methods ----------------------------------------------
@@ -315,7 +328,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             Errors are logged and counted in metrics.
         """
         # Delegate to TX handler
-        await self._tx_handler.send(self._bus, can_id, data)
+        await self._tx_handler.send(can_id, data)
 
     def _on_tx_success(self) -> None:
         """Callback for successful transmission (updates metrics)."""
@@ -471,110 +484,95 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
     # --- Internal main loop -------------------------------------------------
 
-    async def _run(self) -> None:  # pylint: disable=too-many-statements,too-many-branches
-        """Main bridge loop: connect, run session, reconnect on failure."""
+    async def _run(self) -> None:
+        """Connect, run a session, and retry recoverable failures."""
         attempt = 0
-        had_rx = False
-        while not self._stop_event.is_set():
-            bus: can.BusABC | None = None
-            try:
-                # Transition to CONNECTING state
-                if self._connection_state == ConnectionState.DISCONNECTED:
-                    await self._transition_state(ConnectionState.CONNECTING)
-
-                # Build connection parameters each attempt (in case they change)
-                interface, channel, kwargs = (
-                    self._interface,
-                    self._channel,
-                    self._bus_kwargs,
-                )
-                self.logger.info(
-                    "Connecting to CAN (iface=%s, channel=%s)", interface, channel
-                )
-
+        try:
+            while not self._stop_event.is_set():
+                had_rx = False
                 try:
-                    bus = can.Bus(
-                        interface=interface,
-                        channel=channel,
-                        **kwargs,
+                    if self._connection_state == ConnectionState.DISCONNECTED:
+                        await self._transition_state(ConnectionState.CONNECTING)
+                    self.logger.info(
+                        "Connecting to CAN (iface=%s, channel=%s)",
+                        self._interface,
+                        self._channel,
                     )
-                except can.CanError as e:
-                    self.logger.warning("Connect failed: %s", e)
-                    bus = None
+                    bus = await self._create_bus(
+                        self._interface, self._channel, self._bus_kwargs
+                    )
+                    had_rx = await self._run_session(bus)
+                except PermissionError:
+                    self.logger.exception("Permission denied accessing CAN interface")
+                    break
+                except (can.CanError, OSError):
+                    self.logger.warning(
+                        "CAN connection failed; retrying", exc_info=True
+                    )
+                except Exception:  # pylint: disable=broad-exception-caught
+                    self.logger.exception("Unexpected error in CAN bus loop")
 
-                if bus is None:
-                    self._reconnects += 1
-                    await self._transition_state(ConnectionState.DISCONNECTED)
-                    if self._stop_event.is_set():
-                        break
-                    delay = self._next_backoff(attempt)
-                    attempt += 1
-                    self.logger.info("Reconnecting to CAN bus in %.1f seconds", delay)
-                    await asyncio.sleep(delay)
-                    continue
-
-                self.logger.info("Connected (iface=%s, channel=%s)", interface, channel)
-                await self._transition_state(ConnectionState.CONNECTED)
-
-                had_rx = await self._run_session(bus)
-
-            except asyncio.CancelledError:
-                self.logger.info("Bridge task cancelled; shutting down")
-                break
-            except PermissionError as e:
-                self.logger.critical("Permission denied accessing CAN interface: %s", e)
-                # Don't reconnect on permission errors
-                break
-            except can.CanError as e:
-                self.logger.warning("CAN error (will retry): %s", e, exc_info=True)
+                if self._stop_event.is_set():
+                    break
+                await self._transition_state(ConnectionState.DISCONNECTED)
                 self._reconnects += 1
-            except OSError as e:
-                self.logger.error(
-                    "OS error (network/device issue): %s", e, exc_info=True
-                )
-                self._reconnects += 1
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                # Last resort - log with full context for debugging
-                self.logger.exception("Unexpected error in CAN bus loop: %s", e)
-                self._reconnects += 1
-            finally:
-                # session teardown was handled inside _run_session; nothing else here
-                pass
+                if had_rx:
+                    attempt = 0
+                delay = self._next_backoff(attempt)
+                attempt += 1
+                self.logger.info("Reconnecting to CAN bus in %.1f seconds", delay)
+                await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            self.logger.info("Bridge task cancelled; shutting down")
+        finally:
+            self._connected_evt.clear()
+            if (
+                not self._stop_event.is_set()
+                and self._connection_state != ConnectionState.DISCONNECTED
+            ):
+                if self._connection_state == ConnectionState.CONNECTED:
+                    await self._transition_state(ConnectionState.RECONNECTING)
+                await self._transition_state(ConnectionState.DISCONNECTED)
 
-            if self._stop_event.is_set():
-                break
-
-            # Transition to DISCONNECTED after session ends
-            await self._transition_state(ConnectionState.DISCONNECTED)
-
-            # Compute backoff after a completed session
-            self._reconnects += 1
-            if had_rx:
-                attempt = 0
-            delay = self._next_backoff(attempt)
-            attempt += 1
-            self.logger.info("Reconnecting to CAN bus in %.1f seconds", delay)
-            await asyncio.sleep(delay)
+    async def _create_bus(
+        self, interface: str, channel: str, kwargs: dict[str, Any]
+    ) -> can.BusABC:
+        """Create the bus off-loop and close a late connection after cancellation."""
+        task = asyncio.create_task(
+            asyncio.to_thread(can.Bus, interface=interface, channel=channel, **kwargs)
+        )
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # The worker cannot be cancelled; wait for it to release its resources.
+            with suppress(Exception):
+                bus = await task
+                await asyncio.to_thread(bus.shutdown)
+            raise
 
     async def _run_session(self, bus: can.BusABC) -> bool:
         """Run one connected session: setup, receive loop, teardown."""
         had_rx = False
-        self._bus = bus
-        self._reset_connect_state()
-        self._apply_filters()
-
-        loop = asyncio.get_running_loop()
-        bounded = BoundedAsyncCanReader(
-            loop=loop,
-            maxsize=self._bridge_config.bounded_reader_size,
-            drop_oldest=True,
-            on_drop=self._inc_drop,
-            on_enqueue=self._inc_enq,
-        )
         notifier: can.Notifier | None = None
         try:
-            notifier = can.Notifier(bus, [bounded.listener])
-            self._start_rx_workers(n=self._bridge_config.rx_worker_count)
+            async with self._bus_lock:
+                self._bus = bus
+                self._apply_filters()
+                bounded = BoundedAsyncCanReader(
+                    loop=asyncio.get_running_loop(),
+                    maxsize=self._bridge_config.bounded_reader_size,
+                    drop_oldest=True,
+                    on_drop=self._inc_drop,
+                    on_enqueue=self._inc_enq,
+                )
+                notifier = can.Notifier(bus, [bounded.listener])
+                self._start_rx_workers(n=self._bridge_config.rx_worker_count)
+                await self._transition_state(ConnectionState.CONNECTED)
+                self._tx_handler.reset_error_streak()
+                self._reset_connect_state()
+                self.logger.info(
+                    "Connected (iface=%s, channel=%s)", self._interface, self._channel
+                )
             while True:
                 if self._should_reconnect():
                     self.logger.info("Reconnect requested; leaving reader loop")
@@ -613,15 +611,18 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
                         )
                         self._rx_backpressure_drop_logged = self._rx_backpressure_drop
         finally:
-            self._teardown_session(bus, notifier)
-            await self._stop_rx_workers()
-            self._bus = None
-            self._clear_connect_state()
-
-            # drain processing queue to avoid stale backlog across sessions
-            while not self._proc_queue.empty():
-                with suppress(asyncio.QueueEmpty):
-                    self._proc_queue.get_nowait()
+            self._connected_evt.clear()
+            self._reconnect_now.set()
+            if self._connection_state == ConnectionState.CONNECTED:
+                await self._transition_state(ConnectionState.RECONNECTING)
+            try:
+                await self._stop_rx_workers()
+            finally:
+                await self._teardown_session(bus, notifier)
+                self._clear_connect_state()
+                while not self._proc_queue.empty():
+                    with suppress(asyncio.QueueEmpty):
+                        self._proc_queue.get_nowait()
         return had_rx
 
     # --- Internal RX path ---------------------------------------------------
@@ -634,6 +635,8 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             stop_event=self._stop_event,
             on_frame=self._on_frame,
             on_message_processed=self._on_rx_message_processed,
+            max_consecutive_errors=self._bridge_config.max_consecutive_rx_errors,
+            on_worker_failed=lambda: self.trigger_reconnect("RX worker failed"),
         )
         self._rx_worker_manager.start(n)
 
@@ -730,6 +733,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         self._connected_evt.set()
         self._reconnect_now.clear()
         self._connected_since_mono = time.monotonic()
+        self._last_rx_mono = None
         self.logger.info("Session started: %s", self._session_id)
 
     def _clear_connect_state(self) -> None:
@@ -747,20 +751,23 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         self._connected_since_mono = None
         self._session_id = None
 
-    def _teardown_session(
+    async def _teardown_session(
         self, bus: can.BusABC | None, notifier: can.Notifier | None
     ) -> None:
-        """Teardown CAN session.
+        """Wait for sends, detach the bus, and close blocking resources off-loop."""
 
-        Stop the notifier thread first, then shut down the bus.
-        Workers are awaited by the caller after leaving the thread context.
-        """
-        with suppress(Exception):
-            if notifier is not None:
-                notifier.stop()
-        if bus is not None:
+        def shutdown() -> None:
             with suppress(Exception):
-                bus.shutdown()
+                if notifier is not None:
+                    notifier.stop()
+            if bus is not None:
+                with suppress(Exception):
+                    bus.shutdown()
+
+        async with self._bus_lock:
+            if self._bus is bus:
+                self._bus = None
+            await asyncio.to_thread(shutdown)
 
     def _next_backoff(self, attempt: int) -> float:
         """Calculate the next backoff delay."""

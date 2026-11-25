@@ -106,12 +106,11 @@ class TestStateTransition:
             ConnectionState.STOPPING, ConnectionState.CONNECTING
         )
 
-    def test_no_transitions_from_stopped(self) -> None:
-        """Test that STOPPED is a terminal state."""
-        # STOPPED should have no valid transitions
-        for state in ConnectionState:
-            if state != ConnectionState.STOPPED:
-                assert not StateTransition.is_valid(ConnectionState.STOPPED, state)
+    def test_restart_from_stopped(self) -> None:
+        """A fully stopped instance may start a new connection."""
+        assert StateTransition.VALID_TRANSITIONS[ConnectionState.STOPPED] == {
+            ConnectionState.CONNECTING
+        }
 
     def test_self_transition_always_invalid(self) -> None:
         """Test that self-transitions are not allowed."""

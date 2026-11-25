@@ -70,9 +70,6 @@ class Light:
 
     def _update_rgb_color(self, data: dict[str, Any]) -> bool:
         """Update RGB color values."""
-        if not self.state:
-            return False
-
         changed = False
         for color in ["red", "green", "blue", "white"]:
             if color in data:
