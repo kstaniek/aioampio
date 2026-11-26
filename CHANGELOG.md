@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.2.0
+
+- Add device-level `light_groups` for native MLED masked output control.
+  Resolve existing member resources into one validated 16-bit mask and send
+  one frame for on, off, or a common brightness level.
+- Aggregate actual individual-light feedback into group state and brightness,
+  including overlapping groups and partially known states, while preserving
+  individual command paths, feedback subscriptions, and resource identities.
+- Validate missing/duplicate members, physical output bounds, supported models,
+  and generated resource-ID collisions before connecting to a CAN gateway.
+
 ## 2.1.0
 
 - Add `AmpioBridge.subscribe_reconnects(callback)` for synchronous retry-count
