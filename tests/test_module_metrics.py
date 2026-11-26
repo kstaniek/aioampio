@@ -9,7 +9,7 @@ from unittest.mock import Mock
 import can
 import pytest
 
-from aioampio import AmpioBridge
+from aioampio import AmpioBridge, AmpioTransmissionError
 from aioampio.bridge_config import BridgeConfig
 from aioampio.helpers.rx_reader import BoundedAsyncCanReader
 from aioampio.module_metrics import ModuleTraffic
@@ -83,9 +83,11 @@ async def test_bridge_attributes_successful_frames_to_destinations() -> None:
     assert bridge.module_metrics[0x123].tx_total == 1
     assert bridge.module_metrics[0x124].tx_total == len(fragments)
     bus.send.side_effect = can.CanError("send failed")
-    await bridge.send(0x0F000000, bytes.fromhex("00000123150100"))
+    with pytest.raises(AmpioTransmissionError):
+        await bridge.send(0x0F000000, bytes.fromhex("00000123150100"))
     bridge._bus = None
-    await bridge.send(0x0F000000, bytes.fromhex("00000123150100"))
+    with pytest.raises(AmpioTransmissionError):
+        await bridge.send(0x0F000000, bytes.fromhex("00000123150100"))
     assert bridge.module_metrics[0x123].tx_total == 1
     assert bridge.module_metrics[0x123].last_rx_age_s is None
 

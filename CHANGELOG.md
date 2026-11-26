@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.2
+
+- Raise public `AmpioTransmissionError` (a `ConnectionError` subclass) when a
+  frame cannot be sent because the transport is unavailable or a write fails.
+  Commands stop at the failed frame instead of reporting success and sending
+  later fragments. Successful sends still do not prove delivery to the module.
+- Keep the error contract independent of Home Assistant and retain existing
+  successful-send accounting, cancellation handling, and reconnect behavior.
+
 ## 2.0.0
 
 - Promote the validated version 2 bridge and resource-model refactor to stable.

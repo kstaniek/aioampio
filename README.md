@@ -175,3 +175,13 @@ pytest tests/
 ```
 
 The full suite runs against virtual CAN or mocked buses and does not send commands to physical devices. CI runs the suite on Python 3.12, 3.13, and 3.14. A separate Python 3.13 lint job runs the repository pre-commit hooks; both tests and lint must pass before PyPI publication.
+
+## Command errors
+
+Version 2.0.2 exports `AmpioTransmissionError` from `aioampio`. It subclasses
+`ConnectionError` and is raised by `AmpioBridge.send()` and controller commands
+when the transport rejects a frame or a CAN write fails. Callers should catch
+this error and report or handle the failed command. Multi-frame commands stop
+at the first failed frame; already submitted frames cannot be rolled back.
+Successful submission means the transport accepted the frame, not that the
+module received or executed it. Versions through 2.0.1 log these failures but do not propagate this exception.
