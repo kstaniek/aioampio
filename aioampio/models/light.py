@@ -1,5 +1,7 @@
 """Model for Ampio lights."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Any
 import logging
@@ -27,6 +29,7 @@ class Light:
     state: dict[str, Any] = field(default_factory=dict)
     _rgb_channels: dict[str, bool] = field(default_factory=dict)
     _rgb_channel_count: int = 4  # R, G, B, W
+    members: list[str] = field(default_factory=list)
 
     @property
     def supports_dimming(self) -> bool:
@@ -37,6 +40,47 @@ class Light:
     def supports_color(self) -> bool:
         """Check if the light supports color."""
         return self.color
+
+    @property
+    def is_on(self) -> bool | None:
+        """Use binary feedback first, falling back to known output levels."""
+        if (state := self.state.get("state")) is not None:
+            return bool(state)
+        if self.supports_color:
+            levels = [
+                self.state.get(channel) for channel in ("red", "green", "blue", "white")
+            ]
+            return any(levels) if all(level is not None for level in levels) else None
+        brightness = self.state.get("brightness")
+        return (
+            brightness > 0 if self.supports_dimming and brightness is not None else None
+        )
+
+    def update_group(self, members: list[Light | None]) -> bool:
+        """Aggregate reported member state without synthesizing command feedback."""
+        powers = [member.is_on if member is not None else None for member in members]
+        power: bool | None = None
+        if any(powers):
+            power = True
+        elif all(p is False for p in powers):
+            power = False
+        levels = [
+            member.state["brightness"]
+            for member in members
+            if member is not None
+            and member.is_on is True
+            and member.state.get("brightness") is not None
+        ]
+        brightness = None
+        if power is False:
+            brightness = 0
+        elif levels:
+            brightness = round(sum(levels) / len(levels))
+        state = {"state": power, "brightness": brightness}
+        if self.state == state:
+            return False
+        self.state = state
+        return True
 
     def update(self, topic: str, data: dict[str, Any]) -> bool:
         """Update light state from incoming data.

@@ -8,7 +8,7 @@ from dacite import from_dict as dataclass_from_dict
 from aioampio.models.alarm_control_panel import AlarmControlPanel
 from aioampio.models.area import Area
 from aioampio.models.climate import Climate
-from aioampio.models.config import Config
+from aioampio.models.config import Config, DeviceCfg, resource_id
 from aioampio.models.cover import Cover
 from aioampio.models.device import Device
 from aioampio.models.floor import Floor
@@ -23,10 +23,8 @@ from aioampio.models.valve import Valve
 if TYPE_CHECKING:
     from .bridge import AmpioBridge
 
-type AmpioResource = (
-    Device
-    | Floor
-    | Light
+type AmpioEntityResource = (
+    Light
     | Sensor
     | Switch
     | Text
@@ -34,9 +32,9 @@ type AmpioResource = (
     | Valve
     | Cover
     | Climate
-    | Area
     | AlarmControlPanel
 )
+type AmpioResource = Device | Floor | Area | AmpioEntityResource
 
 
 def _norm_id(s: str) -> str:
@@ -65,7 +63,7 @@ class AmpioConfig:
 
     def _summary_counts(self) -> str:
         """Return a summary of item counts by type."""
-        counts = {}
+        counts: dict[str, int] = {}
         for v in self._items.values():
             k = type(v).__name__
             counts[k] = counts.get(k, 0) + 1
@@ -147,11 +145,33 @@ class AmpioConfig:
                     if not sid.startswith(prefix):
                         sid = prefix + sid
                     subitem.id = sid
-                    item_obj = dataclass_from_dict(cls, subitem.model_dump())
+                    item_obj: AmpioEntityResource = dataclass_from_dict(
+                        cls, subitem.model_dump()
+                    )
                     item_obj.owner = device.id
                     self._items[item_obj.id] = item_obj
+
+            self._add_light_groups(device)
         self._validate_uniqueness()
         self._logger.info(self._summary_counts())
+
+    def _add_light_groups(self, device: DeviceCfg) -> None:
+        """Add computed resources only after their ordinary members exist."""
+        for group in device.light_groups:  # pylint: disable=not-an-iterable
+            identifier = resource_id(f"light_group_{_norm_id(group.id)}", device.can_id)
+            if identifier in self._items:
+                raise ValueError(f"Duplicate resource ID: {identifier}")
+            self._items[identifier] = Light(
+                id=identifier,
+                on=True,
+                name=group.name,
+                dimming=True,
+                owner=device.id,
+                area=group.area,
+                members=[
+                    resource_id(member, device.can_id) for member in group.members
+                ],
+            )
 
     @property
     def whitelist_can_ids(self) -> set[int]:

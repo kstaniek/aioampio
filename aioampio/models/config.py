@@ -12,6 +12,16 @@ from pydantic import (
     field_validator,
 )
 
+from aioampio.controllers.utils import get_entity_index
+
+
+def resource_id(value: str, can_id: int) -> str:
+    """Normalize a local or already qualified resource identifier."""
+    prefix = f"{can_id:08x}_"
+    normalized = value.strip().lower().replace(" ", "_")
+    return normalized if normalized.startswith(prefix) else prefix + normalized
+
+
 state_value_types = {
     "bin",
     "bout",
@@ -122,6 +132,17 @@ class PlatformCfg(BaseModel):
         raise TypeError(f"state must be str or list[str], got {type(v).__name__}")
 
 
+class LightGroupCfg(BaseModel):
+    """A masked light whose members are ordinary lights on one module."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    name: str
+    members: list[str] = Field(min_length=1)
+    area: str | None = None
+
+
 class DeviceCfg(BaseModel):
     """Configuration model for devices."""
 
@@ -137,12 +158,76 @@ class DeviceCfg(BaseModel):
     binary_sensors: list[BinarySensorCfg] = Field(default_factory=list)
     sensors: list[SensorCfg] = Field(default_factory=list)
     lights: list[LightCfg] = Field(default_factory=list)
+    light_groups: list[LightGroupCfg] = Field(default_factory=list)
     covers: list[CoverCfg] = Field(default_factory=list)
     alarm_control_panels: list[AlarmControlPanelCfg] = Field(default_factory=list)
     texts: list[TextCfg] = Field(default_factory=list)
     switches: list[SwitchCfg] = Field(default_factory=list)
     valves: list[ValveCfg] = Field(default_factory=list)
     climates: list[ClimateCfg] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_light_groups(self) -> DeviceCfg:
+        """Resolve membership and reject unsafe masks before connecting."""
+        # Pydantic Field defaults are lists after model validation.
+        # pylint: disable=not-an-iterable
+        if not self.light_groups:
+            return self
+        if self.model != DeviceType.MLED:
+            raise ValueError("Masked light groups require an MLED (model 17) module")
+
+        lights = {resource_id(light.id, self.can_id): light for light in self.lights}
+        identifiers: set[str] = set()
+        for field in (
+            "lights",
+            "binary_sensors",
+            "sensors",
+            "covers",
+            "alarm_control_panels",
+            "texts",
+            "switches",
+            "valves",
+            "climates",
+        ):
+            for item in getattr(self, field):
+                identifier = resource_id(item.id, self.can_id)
+                if identifier in identifiers:
+                    raise ValueError(f"Duplicate resource ID: {identifier}")
+                identifiers.add(identifier)
+
+        for group in self.light_groups:
+            normalized = group.id.strip().lower().replace(" ", "_")
+            if not normalized:
+                raise ValueError("Light group ID must not be blank")
+            identifier = resource_id(f"light_group_{normalized}", self.can_id)
+            if identifier in identifiers:
+                raise ValueError(f"Duplicate resource ID: {identifier}")
+            identifiers.add(identifier)
+            self._validate_light_group_members(group, lights)
+        return self
+
+    def _validate_light_group_members(
+        self, group: LightGroupCfg, lights: dict[str, LightCfg]
+    ) -> None:
+        """Check referenced members and their untruncated physical output indices."""
+        member_ids = [resource_id(member, self.can_id) for member in group.members]
+        if len(set(member_ids)) != len(member_ids):
+            raise ValueError(f"Duplicate members in light group {group.id}")
+        indices: set[int] = set()
+        for member_id in member_ids:
+            member = lights.get(member_id)
+            if member is None:
+                raise ValueError(f"Unknown ordinary light member: {member_id}")
+            if member.color or not member.dimming:
+                raise ValueError(
+                    "Masked light groups require non-RGBW dimmable members"
+                )
+            index = get_entity_index(member_id)
+            if index is None or not 0 <= index < 16:
+                raise ValueError(f"Masked light output must be in 1..16: {member_id}")
+            if index in indices:
+                raise ValueError(f"Duplicate output in light group {group.id}")
+            indices.add(index)
 
 
 class SensorCfg(PlatformCfg):

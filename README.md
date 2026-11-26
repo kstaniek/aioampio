@@ -17,6 +17,43 @@ Assistant imports in a fresh interpreter while initializing the library.
 
 ## Version 2
 
+### Native MLED light groups (2.2.0)
+
+Add `light_groups` alongside a model-17 device's ordinary `lights`:
+
+```yaml
+light_groups:
+  - id: sofa
+    name: MLED Sofa
+    members: [light11, light12, light13, light14, light15, light16]
+    area: Salon
+```
+
+Members must be existing non-RGBW dimmable lights on that module, with distinct
+command outputs in 1–16. Local and already qualified member IDs are accepted.
+The group is an additional resource in `bridge.lights`, with an ID such as
+`00001e5f_light_group_sofa` and resolved `members`. Existing member IDs and
+commands are preserved. Unsupported models, missing or duplicate members,
+nested groups, output bounds, and resource-ID collisions fail validation.
+
+`await bridge.lights.set_state(group_id, on=True, brightness=128)` sends exactly
+one `0x14` frame with a little-endian mask (0xFC00 for outputs 11–16). Plain
+library on uses 255 and off uses 0; consumers may remember their own shared
+brightness setpoint. Group commands do not fan out or generate optimistic state.
+
+Received member resource updates synchronously recompute containing groups,
+including overlapping memberships. Group power is on if any member is known
+on, off if all are known off, and otherwise unknown. Brightness is the rounded
+mean of known levels of on members, zero when known off, and otherwise unknown.
+The library retains individual feedback routing and emits group resource
+updates only when aggregate state changes. It imports no Home Assistant APIs.
+
+Exact frame tests, invalid configuration cases, overlapping feedback, deletion,
+cleanup, and failure behavior are covered by `tests/test_light_groups.py`.
+The command format was also accepted on MLED module 7775 (PCB 8, firmware 11701)
+on 2026-11-26: Kitchen mask 0x03FF and Sofa mask 0xFC00 passed on, off, and
+brightness 128 with per-output RX feedback and user visual checks.
+
 Version 2 changes the constructor, metrics, and alarm-state APIs. See the
 migration guide below when upgrading from 1.0.x. Home Assistant users should
 upgrade through hacs-ampio 0.2.0 or newer, which adapts these APIs and provides
