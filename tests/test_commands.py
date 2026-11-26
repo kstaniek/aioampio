@@ -1,6 +1,7 @@
 """Capture outgoing command frames without opening a physical CAN bus."""
 
-from unittest.mock import AsyncMock
+import asyncio
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -112,3 +113,56 @@ async def test_alarm_pin_and_zone_mask_are_not_sent_to_hardware() -> None:
     bridge.send.reset_mock()
     await bridge.alarm_control_panels.disarm("00000123_alarm1", "invalid")
     bridge.send.assert_not_awaited()
+
+
+async def test_rgbw_bursts_are_paced_and_do_not_interleave() -> None:
+    """Avoid dropping channels when rapid off/on commands share a module."""
+    bridge = await make_bridge(model=12)
+    light = bridge.lights["00000123_light1"]
+    light.color = True
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    real_sleep = asyncio.sleep
+    now = 100.0
+    sent = []
+
+    async def sleep(delay: float) -> None:
+        nonlocal now
+        now += delay
+        await real_sleep(0)
+
+    async def send(can_id: int, *, data: bytes) -> None:
+        sent.append((now, can_id, data.hex()))
+        if not entered.is_set():
+            entered.set()
+            await release.wait()
+        await real_sleep(0)
+
+    bridge.send.side_effect = send
+    with (
+        patch(
+            "aioampio.controllers.lights.monotonic",
+            side_effect=lambda: now,
+            create=True,
+        ),
+        patch("asyncio.sleep", side_effect=sleep),
+    ):
+        off = asyncio.create_task(bridge.lights.set_state(light.id, on=False))
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        on = asyncio.create_task(
+            bridge.lights.set_state(light.id, color=(64, 32, 16, 8))
+        )
+        try:
+            await real_sleep(0)
+        finally:
+            release.set()
+            await asyncio.gather(off, on)
+    expected = [f"000001231500{channel:02x}" for channel in range(4)] + [
+        f"0000012315{level:02x}{channel:02x}"
+        for channel, level in enumerate((64, 32, 16, 8))
+    ]
+    assert [frame for _, _, frame in sent] == expected
+    assert all(can_id == 0x0F000000 for _, can_id, _ in sent)
+    assert all(
+        after[0] - before[0] >= 0.009999 for before, after in zip(sent, sent[1:])
+    )
