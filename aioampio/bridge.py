@@ -25,6 +25,7 @@ from aioampio.rx_workers import (
     RxWorkerManager,
 )
 from aioampio.state_machine import ConnectionState, StateTransition
+from aioampio.exceptions import AmpioTransmissionError
 from aioampio.tx_handler import TxHandler
 from aioampio.watchdog import (
     IdleWatchdog,
@@ -334,12 +335,12 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             can_id: CAN arbitration ID (29-bit extended)
             data: Frame payload (max 8 bytes for CAN 2.0)
 
-        Note:
-            Messages are dropped silently if bus is not connected or reconnecting.
-            Errors are logged and counted in metrics.
+        Raises:
+            AmpioTransmissionError: The transport rejected the frame or sending failed.
         """
         # Delegate to TX handler
-        await self._tx_handler.send(can_id, data)
+        if not await self._tx_handler.send(can_id, data):
+            raise AmpioTransmissionError("CAN frame could not be transmitted")
 
     def _on_tx_success(self, msg: can.Message) -> None:
         """Callback for successful transmission (updates metrics)."""

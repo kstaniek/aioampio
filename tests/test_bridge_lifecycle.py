@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import can
 import pytest
 
-from aioampio import AmpioBridge
+from aioampio import AmpioBridge, AmpioTransmissionError
 from aioampio import bridge as bridge_module
 from aioampio.bridge_config import BridgeConfig
 from aioampio.state_machine import ConnectionState
@@ -258,7 +258,8 @@ async def test_queued_send_is_dropped_when_reconnect_starts() -> None:
         sending = asyncio.create_task(bridge.send(123, b"x"))
         await asyncio.sleep(0)
         bridge.trigger_reconnect("test")
-    await sending
+    with pytest.raises(AmpioTransmissionError):
+        await sending
     bus.send.assert_not_called()
 
 
@@ -298,7 +299,8 @@ async def test_receive_failure_blocks_tx_during_cleanup(
         await asyncio.wait_for(cleaning.wait(), 2)
         assert bridge.connection_state == ConnectionState.RECONNECTING
         assert not bridge.connected
-        await bridge.send(123, b"x")
+        with pytest.raises(AmpioTransmissionError):
+            await bridge.send(123, b"x")
         bus.send.assert_not_called()
     finally:
         release.set()
