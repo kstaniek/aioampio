@@ -21,7 +21,7 @@ jobs:
     outputs:
       version: ${{ steps.vars.outputs.tag }}
     steps:
-      - uses: actions/checkout@v5.0.0
+      - uses: actions/checkout@v6.0.2
       - name: Get tag
         id: vars
         run: echo "tag=${GITHUB_REF#refs/*/}" >> $GITHUB_OUTPUT
@@ -39,7 +39,7 @@ jobs:
             fi
           fi
       - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v6.0.0
+        uses: actions/setup-python@v6.2.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install build
