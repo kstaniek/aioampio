@@ -2,7 +2,10 @@
 
 import asyncio
 from pathlib import Path
-from typing import Literal, TypeAlias
+
+# Import from centralized types module
+# pylint: disable=unused-import
+from aioampio.types import CanInterface  # noqa: F401 - re-exported for backward compatibility
 
 
 async def read_text(path: str) -> str:
@@ -10,28 +13,7 @@ async def read_text(path: str) -> str:
     return await asyncio.to_thread(Path(path).read_text, encoding="utf-8")
 
 
-# ---- CAN interface typing & discovery ---------------------------------------
-# Common python-can backend names + your custom 'waveshare' and 'cannelloni'
-KnownCanInterface = Literal[
-    "waveshare",
-    "cannelloni",
-    "socketcand",
-    "socketcan",
-    "slcan",
-    "pcan",
-    "kvaser",
-    "ixxat",
-    "vector",
-    "nican",
-    "neovi",
-    "usb2can",
-    "cantact",  # codespell:ignore
-    "canalystii",
-    "seeedstudio",
-    "virtual",
-]
-
-CanInterface: TypeAlias = KnownCanInterface  # extend if you adopt more backends
+# ---- CAN interface discovery ---------------------------------------
 
 
 def _discover_backends() -> set[str]:

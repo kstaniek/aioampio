@@ -18,7 +18,7 @@ async def wait_for_thread(event: threading.Event) -> None:
 
 
 def test_existing_constructor() -> None:
-    """Keep main's interface/channel API and backend keyword arguments."""
+    """Keep the maintenance interface/channel API and backend keyword arguments."""
     bridge = AmpioBridge({}, "waveshare", "can1", host="192.0.2.1", port=20001)
     assert bridge._interface == "waveshare"
     assert bridge._channel == "can1"
@@ -31,7 +31,7 @@ async def test_connection_does_not_block_loop(monkeypatch: pytest.MonkeyPatch) -
     release = threading.Event()
     bus = Mock(spec=can.BusABC)
     loop_thread = threading.get_ident()
-    bridge = AmpioBridge({}, "virtual", "test")
+    bridge = AmpioBridge({}, interface="virtual", channel="test")
 
     def create_bus(**kwargs: object) -> can.BusABC:
         assert threading.get_ident() != loop_thread
@@ -66,7 +66,7 @@ async def test_cancelled_connection_cleanup(
     release = threading.Event()
     closed = threading.Event()
     loop_thread = threading.get_ident()
-    bridge = AmpioBridge({}, "virtual", "test")
+    bridge = AmpioBridge({}, interface="virtual", channel="test")
     bus = Mock(spec=can.BusABC)
 
     def shutdown() -> None:
@@ -96,7 +96,7 @@ async def test_cancelled_connection_cleanup(
 
 async def test_connection_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     """Propagate backend errors to the existing reconnect handler."""
-    bridge = AmpioBridge({}, "virtual", "test")
+    bridge = AmpioBridge({}, interface="virtual", channel="test")
     monkeypatch.setattr(can, "Bus", Mock(side_effect=can.CanError("Simulated failure")))
     with pytest.raises(can.CanError, match="Simulated failure"):
         await bridge._create_bus("virtual", "test", {})
@@ -107,7 +107,7 @@ async def test_stop_during_connection(monkeypatch: pytest.MonkeyPatch) -> None:
     entered = threading.Event()
     release = threading.Event()
     bus = Mock(spec=can.BusABC)
-    bridge = AmpioBridge({}, "virtual", "test")
+    bridge = AmpioBridge({}, interface="virtual", channel="test")
 
     def create_bus(**_kwargs: object) -> can.BusABC:
         entered.set()
@@ -131,7 +131,7 @@ async def test_stop_during_connection(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def test_virtual_start_stop() -> None:
     """Connect and stop twice without leaving a bus or transport behind."""
-    bridge = AmpioBridge({}, "virtual", "release-test")
+    bridge = AmpioBridge({}, interface="virtual", channel="release-test")
     for _ in range(2):
         await bridge.start()
         try:

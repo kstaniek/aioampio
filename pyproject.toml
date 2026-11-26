@@ -12,18 +12,20 @@ classifiers = [
   "Environment :: Console",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
   "python-can",
   "can-waveshare",
   "pydantic>=2.6",
   "dacite",
+  "PyYAML>=6.0.1",
 ]
 description = "Python module to talk to Ampio devices."
 license = {text = "Apache-2.0"}
 readme = "README.md"
 requires-python = ">=3.12"
-version = "0.0.0"
+version = "2.0.0"
 
 [project.optional-dependencies]
 test = [

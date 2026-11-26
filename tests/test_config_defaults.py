@@ -50,7 +50,7 @@ async def test_resource_defaults(
             }
         ]
     }
-    bridge = AmpioBridge(config, "virtual", "config-defaults")
+    bridge = AmpioBridge(config, interface="virtual", channel="config-test")
     try:
         await bridge.initialize()
         controller = getattr(bridge, platform)

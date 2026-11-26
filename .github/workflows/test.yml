@@ -6,14 +6,13 @@ name: Test
 on:
   workflow_call:
   push:
-    branches: [main, "release/**"]
+    branches: [main, "bridge-refactor", "release/**"]
   pull_request:
-    branches: [main]
+    branches: [main, "bridge-refactor"]
 
 jobs:
   lint:
     runs-on: ubuntu-latest
-    continue-on-error: true
 
     steps:
       - name: Check out code from GitHub
