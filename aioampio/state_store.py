@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
+from contextvars import ContextVar
 import inspect
 import math
 from typing import Any, TYPE_CHECKING, Awaitable, Callable
@@ -14,6 +16,7 @@ if TYPE_CHECKING:
     from aioampio.bridge import AmpioBridge
 
 ChangeCallback = Callable[[EventType, dict | None], Awaitable[None] | None]
+_IN_NOTIFICATION: ContextVar[bool] = ContextVar("ampio_notification", default=False)
 
 
 class StateStore:
@@ -23,6 +26,20 @@ class StateStore:
     - Value: arbitrary JSON-like payload
     - Callbacks fire only when the payload actually changes
     - Notification order is preserved per topic
+
+    Thread Safety:
+        - Reading/writing values is protected by an async lock
+        - Notifications happen outside the lock to prevent blocking
+        - Multiple notifications for different topics can run concurrently
+
+    Callback Behavior:
+        - Global callbacks receive notifications for all topics
+        - Topic-specific callbacks only receive notifications for their topic
+        - Global callbacks are notified before topic-specific ones
+        - Callbacks are invoked with a snapshot of the callback list
+        - Failed callbacks are logged but don't stop other notifications
+        - Callback writes to a topic already being notified are queued; they
+          return before delivery to avoid notification feedback deadlocks
     """
 
     def __init__(self, bridge: AmpioBridge) -> None:
@@ -32,6 +49,10 @@ class StateStore:
         self._callbacks: list[ChangeCallback] = []
         self._callbacks_by_topic: dict[str, list[ChangeCallback]] = {}
         self._lock = asyncio.Lock()
+        self._pending: dict[
+            str, deque[tuple[Any, Any, asyncio.Future[None] | None]]
+        ] = {}
+        self._notifying: set[str] = set()
 
     def get(self, topic: str) -> Any | None:
         """Get the latest payload for a topic, or None if not set."""
@@ -44,7 +65,25 @@ class StateStore:
     def on_change(
         self, cb: ChangeCallback, *, topic: str | None = None
     ) -> Callable[[], None]:
-        """Register a callback to be called when an entity changes."""
+        """Register a callback to be called when an entity changes.
+
+        Args:
+            cb: Callback function to invoke on changes. Can be sync or async.
+               Receives (EventType, dict) where dict contains:
+               - 'topic': The changed topic
+               - 'data': The new payload value
+               - 'previous': The old payload value (or None)
+            topic: If provided, only receive notifications for this specific topic.
+                   If None, receive notifications for all topics.
+
+        Returns:
+            Unsubscribe function that removes the callback when called
+
+        Note:
+            The same callback can be registered multiple times for different topics.
+            If registered both globally and for a specific topic, it will be called
+            twice for that topic's changes (once as global, once as topic-specific).
+        """
         if topic is None:
             lst = self._callbacks
         else:
@@ -66,17 +105,65 @@ class StateStore:
         return unsubscribe
 
     async def apply_message(self, msg: AmpioMessage) -> bool:
-        """Apply an incoming AmpioMessage to update the state store."""
+        """Apply an incoming AmpioMessage to update the state store.
+
+        Args:
+            msg: Ampio message containing topic and payload
+
+        Returns:
+            True if the value changed and notifications were dispatched or queued;
+            False if unchanged
+        """
         return await self.set(msg.topic, msg.payload)
 
     async def set(self, topic: str, payload: Any) -> bool:
-        """Set the payload for a topic, notifying subscribers if it changed."""
+        """Set the payload for a topic, notifying subscribers if it changed.
+
+        Args:
+            topic: Topic identifier
+            payload: New value for the topic (any JSON-serializable type)
+
+        Returns:
+            True if the value changed and notifications were dispatched or queued;
+            False if unchanged
+        """
         async with self._lock:
             old = self._values.get(topic)
             if self._equal(old, payload):
                 return False
             self._values[topic] = payload
-        await self._notify(topic, payload, old)
+            owner = topic not in self._notifying
+            done = None
+            if not owner and not _IN_NOTIFICATION.get():
+                done = asyncio.get_running_loop().create_future()
+            queue = self._pending.setdefault(topic, deque())
+            queue.append((payload, old, done))
+            if owner:
+                self._notifying.add(topic)
+        if not owner:
+            if done is not None:
+                await done
+            return True
+
+        done = None
+        try:
+            while queue:
+                new, previous, done = queue.popleft()
+                token = _IN_NOTIFICATION.set(True)
+                try:
+                    await self._notify(topic, new, previous)
+                finally:
+                    _IN_NOTIFICATION.reset(token)
+                if done is not None and not done.done():
+                    done.set_result(None)
+        finally:
+            if done is not None and not done.done():
+                done.cancel()
+            for _, _, waiting in queue:
+                if waiting is not None and not waiting.done():
+                    waiting.cancel()
+            self._pending.pop(topic)
+            self._notifying.remove(topic)
         return True
 
     async def _notify(self, topic: str, new: Any, old: Any | None) -> None:
