@@ -15,12 +15,15 @@ tests belong in `hacs-ampio`, not in this package. Library tests use synthetic C
 frames and callbacks; `tests/test_library_boundary.py` additionally blocks Home
 Assistant imports in a fresh interpreter while initializing the library.
 
-## Version 2 beta
+## Version 2
 
-Version 2 changes the constructor, metrics, and alarm-state APIs. Test the beta in a development environment before updating an integration. The published Ampio Home Assistant integration remains pinned to the stable 1.0.x library until its version 2 validation is complete.
+Version 2 changes the constructor, metrics, and alarm-state APIs. See the
+migration guide below when upgrading from 1.0.x. Home Assistant users should
+upgrade through hacs-ampio 0.2.0 or newer, which adapts these APIs and provides
+passive module availability monitoring.
 
 ```sh
-python -m pip install aioampio==2.0.0b4
+python -m pip install aioampio==2.0.0
 ```
 
 ## Connect to a gateway

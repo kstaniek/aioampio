@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.0.0
+
+- Promote the validated version 2 bridge and resource-model refactor to stable.
+- Require explicit CAN interface/channel constructor arguments; expose structured
+  `BridgeMetrics` and alarm `get_state()`. See the README migration guide.
+- Serialize lifecycle transitions, preserve per-topic event order, await resource
+  updates, and bound RX work so bursts do not starve the event loop.
+- Keep blocking transport construction, sends and teardown off the event loop.
+- Add immutable per-module RX/TX totals, monotonic RX ages and UTC last-frame
+  timestamps; preserve counters across transport reconnects.
+- Account for successful executor sends even when their callers are cancelled.
+- Disable silence-triggered reconnect timers by default. A silent module or broken
+  CAN bus does not prove a transport failure. Reported notifier/socket failures,
+  closed descriptors and failed RX workers still recover the connection. Legacy
+  silence reconnect timers remain available when explicitly configured.
+- Keep the library standalone, with no Home Assistant dependency.
+
+Acceptance used a packaged beta on Python 3.12–3.14 and HA 2026.11/development
+Core. A temporary receive-only proxy confirmed module timeout and recovery
+without gateway reconnects, plus independent EOF recovery. A guarded RGBW test on
+module 00001879 confirmed command feedback and matching global/module TX counters,
+then restored its original state. The Python implementation is unchanged from
+2.0.0b4.
+
 ## 2.0.0b3 (pre-release)
 
 - Await controller state updates within state-store notifications instead of
