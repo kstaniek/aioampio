@@ -206,6 +206,30 @@ armed = state["armed"]
 
 ## Development
 
+### Native masked light groups
+
+Add `light_groups` beside a device's ordinary `lights`. MLED (model 17) supports
+non-RGBW dimmable members on outputs 1–16. Version 2.3.0 adds MREL8S (model 4)
+binary members on outputs 1–8:
+
+```yaml
+light_groups:
+  - id: garaz
+    name: Garaż
+    area: Garaż
+    members: [light3, light5, light6]
+```
+
+Members reference existing local light IDs on the same module. Their numeric
+suffix selects the physical output, independent of feedback offsets such as
+`binout.27`. This example uses mask `0x0034`. Each on/off action sends one
+`0x14` frame with value 255/0. Relay groups reject intermediate brightness;
+MLED groups also accept a shared brightness level. Individual controls remain.
+Group power follows member feedback: any on, all off, otherwise unknown.
+Relay groups have no brightness state. Group IDs remain stable across renames.
+
+### Test suite
+
 ```sh
 python -m pip install -e . pytest==8.4.2 pytest-asyncio==1.2.0 pytest-cov==7.0.0
 pytest tests/

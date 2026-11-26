@@ -72,7 +72,9 @@ class Light:
             and member.state.get("brightness") is not None
         ]
         brightness = None
-        if power is False:
+        if not self.supports_dimming:
+            brightness = None
+        elif power is False:
             brightness = 0
         elif levels:
             brightness = round(sum(levels) / len(levels))

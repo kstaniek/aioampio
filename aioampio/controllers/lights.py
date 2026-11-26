@@ -4,7 +4,11 @@ import asyncio
 from time import monotonic
 from typing import TYPE_CHECKING
 
-from aioampio.models.config import DeviceType
+from aioampio.models.config import (
+    MASKED_LIGHT_OUTPUT_COUNTS,
+    DeviceType,
+    masked_light_member_supported,
+)
 from aioampio.models.base import validate_byte_value
 from aioampio.models.light import Light
 from aioampio.models.resource import ResourceTypes
@@ -75,17 +79,30 @@ class LightsController(AmpioResourceController[Light]):
     ) -> None:
         """Send exactly one validated mask, never a fan-out to member commands."""
         device = self.get_device(entity.id)
-        if device is None or device.model != DeviceType.MLED or color is not None:
-            raise ValueError("Masked light group requires an MLED module and no color")
+        if (
+            device is None
+            or device.model not in MASKED_LIGHT_OUTPUT_COUNTS
+            or color is not None
+        ):
+            raise ValueError("Masked light group requires MLED or MREL8S and no color")
         mask = 0
         for member_id in entity.members:
             member = self._items.get(member_id)
             index = get_entity_index(member_id)
             if member is None or member.owner != entity.owner or member.members:
                 raise ValueError(f"Invalid masked light member: {member_id}")
-            if member.supports_color or not member.supports_dimming:
+            if not masked_light_member_supported(
+                device.model,
+                on=member.on,
+                dimming=member.supports_dimming,
+                color=member.supports_color,
+            ):
                 raise ValueError(f"Invalid masked light member: {member_id}")
-            if index is None or not 0 <= index < 16 or mask & (1 << index):
+            if (
+                index is None
+                or not 0 <= index < MASKED_LIGHT_OUTPUT_COUNTS[device.model]
+                or mask & (1 << index)
+            ):
                 raise ValueError(f"Invalid masked light member: {member_id}")
             mask |= 1 << index
         if on is False:
@@ -94,6 +111,8 @@ class LightsController(AmpioResourceController[Light]):
             value = validate_byte_value(brightness)
         else:
             value = 255 if on else 0
+        if device.model == DeviceType.MREL8S and value not in (0, 255):
+            raise ValueError("MREL8S masked light groups only support on/off")
         await self._send_command(
             entity.id, bytes((0x14, value)) + mask.to_bytes(2, "little")
         )
