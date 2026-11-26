@@ -83,6 +83,20 @@ class DeviceType(Enum):
     MINOC4P = 26
 
 
+MASKED_LIGHT_OUTPUT_COUNTS = {DeviceType.MLED: 16, DeviceType.MREL8S: 8}
+
+
+def masked_light_member_supported(
+    model: DeviceType, *, on: bool, dimming: bool, color: bool
+) -> bool:
+    """Limit masked commands to supported output types on verified modules."""
+    if color:
+        return False
+    if model == DeviceType.MLED:
+        return dimming
+    return model == DeviceType.MREL8S and on and not dimming
+
+
 class PlatformCfg(BaseModel):
     """Configuration model for platforms."""
 
@@ -173,8 +187,10 @@ class DeviceCfg(BaseModel):
         # pylint: disable=not-an-iterable
         if not self.light_groups:
             return self
-        if self.model != DeviceType.MLED:
-            raise ValueError("Masked light groups require an MLED (model 17) module")
+        if self.model not in MASKED_LIGHT_OUTPUT_COUNTS:
+            raise ValueError(
+                "Masked light groups require MLED (model 17) or MREL8S (model 4)"
+            )
 
         lights = {resource_id(light.id, self.can_id): light for light in self.lights}
         identifiers: set[str] = set()
@@ -218,13 +234,19 @@ class DeviceCfg(BaseModel):
             member = lights.get(member_id)
             if member is None:
                 raise ValueError(f"Unknown ordinary light member: {member_id}")
-            if member.color or not member.dimming:
+            if not masked_light_member_supported(
+                self.model, on=member.on, dimming=member.dimming, color=member.color
+            ):
                 raise ValueError(
-                    "Masked light groups require non-RGBW dimmable members"
+                    "Masked light members must be non-RGBW: dimmable on MLED, "
+                    "binary on MREL8S"
                 )
             index = get_entity_index(member_id)
-            if index is None or not 0 <= index < 16:
-                raise ValueError(f"Masked light output must be in 1..16: {member_id}")
+            outputs = MASKED_LIGHT_OUTPUT_COUNTS[self.model]
+            if index is None or not 0 <= index < outputs:
+                raise ValueError(
+                    f"Masked light output must be in 1..{outputs}: {member_id}"
+                )
             if index in indices:
                 raise ValueError(f"Duplicate output in light group {group.id}")
             indices.add(index)

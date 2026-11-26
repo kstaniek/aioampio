@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.0
+
+- Support native masked on/off light groups on MREL8S (model 4), outputs 1–8.
+  Validate binary members, reject intermediate brightness, and aggregate relay
+  feedback without exposing dimming. Preserve MLED group behavior.
+
 ## 2.2.0
 
 - Add device-level `light_groups` for native MLED masked output control.

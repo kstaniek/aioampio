@@ -8,7 +8,7 @@ from dacite import from_dict as dataclass_from_dict
 from aioampio.models.alarm_control_panel import AlarmControlPanel
 from aioampio.models.area import Area
 from aioampio.models.climate import Climate
-from aioampio.models.config import Config, DeviceCfg, resource_id
+from aioampio.models.config import Config, DeviceCfg, DeviceType, resource_id
 from aioampio.models.cover import Cover
 from aioampio.models.device import Device
 from aioampio.models.floor import Floor
@@ -165,7 +165,7 @@ class AmpioConfig:
                 id=identifier,
                 on=True,
                 name=group.name,
-                dimming=True,
+                dimming=device.model == DeviceType.MLED,
                 owner=device.id,
                 area=group.area,
                 members=[
