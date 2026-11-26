@@ -1,10 +1,20 @@
 """Lights Controller."""
 
+import asyncio
+from time import monotonic
+from typing import TYPE_CHECKING
+
 from aioampio.models.config import DeviceType
 from aioampio.models.light import Light
 from aioampio.models.resource import ResourceTypes
 
 from .base import AmpioResourceController
+
+if TYPE_CHECKING:
+    from aioampio.bridge import AmpioBridge
+
+# Rapid RGBW bursts can lose channels on physical modules/gateways.
+RGBW_CHANNEL_INTERVAL_S = 0.01
 
 
 class LightsController(AmpioResourceController[Light]):
@@ -12,6 +22,24 @@ class LightsController(AmpioResourceController[Light]):
 
     item_type = ResourceTypes.LIGHT
     item_cls = Light
+
+    def __init__(self, bridge: "AmpioBridge") -> None:
+        """Keep RGBW channel groups and their pacing local to each module."""
+        super().__init__(bridge)
+        self._rgbw_locks: dict[str, asyncio.Lock] = {}
+        self._rgbw_next_send: dict[str, float] = {}
+
+    async def _set_rgbw(
+        self, id: str, device_id: str, levels: tuple[int, int, int, int]
+    ) -> None:
+        """Serialize four-channel writes and leave time for physical delivery."""
+        async with self._rgbw_locks.setdefault(device_id, asyncio.Lock()):
+            for channel, level in enumerate(levels):
+                delay = self._rgbw_next_send.get(device_id, 0) - monotonic()
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                await self._send_command(id, bytes((0x15, level & 0xFF, channel)))
+                self._rgbw_next_send[device_id] = monotonic() + RGBW_CHANNEL_INTERVAL_S
 
     async def set_state(  # pylint: disable=too-many-branches
         self,
@@ -41,14 +69,12 @@ class LightsController(AmpioResourceController[Light]):
                     self._logger.warning(
                         "Brightness control not supported for color lights"
                     )
-                if entity.supports_color and color is not None:
-                    for i in range(4):
-                        payload = bytes((0x15, color[i] & 0xFF, i & 0xFF))
-                        await self._send_command(id, payload)
-                else:
-                    for i in range(4):
-                        payload = bytes((0x15, 0xFF if on else 0x00, i & 0xFF))
-                        await self._send_command(id, payload)
+                levels = (
+                    color
+                    if entity.supports_color and color is not None
+                    else (0xFF if on else 0x00,) * 4
+                )
+                await self._set_rgbw(id, device.id, levels)
                 return
 
             case (
