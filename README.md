@@ -185,3 +185,14 @@ this error and report or handle the failed command. Multi-frame commands stop
 at the first failed frame; already submitted frames cannot be rolled back.
 Successful submission means the transport accepted the frame, not that the
 module received or executed it. Versions through 2.0.1 log these failures but do not propagate this exception.
+
+## Reconnect notifications (2.1.0)
+
+`bridge.subscribe_reconnects(callback)` returns an idempotent unsubscribe function.
+The synchronous callback receives the new integer count on the bridge event loop
+as soon as a retry cycle is recorded, before backoff starts. Keep callbacks short
+and nonblocking. Subscriber exceptions are logged without interrupting transport
+recovery. Subscribe does not emit an initial value; read
+`bridge.metrics.reconnects` for the current count. The initial connection is not
+counted; failed retry cycles are counted. The counter lasts for the bridge
+instance, including stop/start, and starts at zero for a new instance.

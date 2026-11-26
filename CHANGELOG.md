@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.0
+
+- Add `AmpioBridge.subscribe_reconnects(callback)` for synchronous retry-count
+  change notifications on the bridge event loop, before retry backoff begins.
+  The returned unsubscribe is idempotent; subscriber errors do not interrupt
+  transport recovery. No Home Assistant dependency is introduced.
+
 ## 2.0.2
 
 - Raise public `AmpioTransmissionError` (a `ConnectionError` subclass) when a
