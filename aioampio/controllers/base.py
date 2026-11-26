@@ -192,17 +192,8 @@ class AmpioResourceController[AmpioResource](ControllerMetrics):
         if not topics:
             return
 
-        def _on_change(evt_type: EventType, payload: dict | None) -> None:
-            coro = self._handle_event(evt_type, payload)
-            try:
-                # Async runtime present -> schedule normally
-                loop = asyncio.get_running_loop()
-                loop.create_task(coro)
-            except RuntimeError:
-                # No running loop (e.g. tests calling emit() synchronously):
-                # drive the coroutine to completion on the current loop.
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(coro)
+        async def _on_change(evt_type: EventType, payload: dict | None) -> None:
+            await self._handle_event(evt_type, payload)
 
         unsubs: list[Callable[[], None]] = []
         for t in topics:
