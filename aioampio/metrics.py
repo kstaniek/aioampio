@@ -45,7 +45,8 @@ Types:
 """
 
 from dataclasses import dataclass
-from typing import TypedDict
+from datetime import datetime
+from typing import NotRequired, TypedDict
 
 
 class BridgeMetricsDict(TypedDict):
@@ -83,6 +84,7 @@ class BridgeMetricsDict(TypedDict):
     last_rx_age_s: float | None
     last_tx_age_s: float | None
     connection_uptime_s: float | None
+    last_rx_at: NotRequired[str | None]
 
 
 @dataclass
@@ -119,6 +121,7 @@ class BridgeMetrics:  # pylint: disable=too-many-instance-attributes
     # Timing metrics
     last_rx_age_s: float | None
     last_tx_age_s: float | None
+    last_rx_at: datetime | None = None
 
     @property
     def is_healthy(self) -> bool:
@@ -210,6 +213,7 @@ class BridgeMetrics:  # pylint: disable=too-many-instance-attributes
             "tx_errors": self.tx_errors,
             "rx_queue_depth": self.rx_queue_depth,
             "last_rx_age_s": self.last_rx_age_s,
+            "last_rx_at": self.last_rx_at.isoformat() if self.last_rx_at else None,
             "last_tx_age_s": self.last_tx_age_s,
             "connection_uptime_s": self.connection_uptime_s,
         }

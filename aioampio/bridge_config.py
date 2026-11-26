@@ -90,9 +90,9 @@ class BridgeConfig:
     tx_timeout_s: float = 1.0
 
     # Watchdog timeouts (None to disable)
-    idle_reconnect_s: float | None = 60.0
-    rx_gap_reconnect_s: float | None = 10.0
-    max_no_rx_after_connect_s: float | None = 10.0
+    idle_reconnect_s: float | None = None
+    rx_gap_reconnect_s: float | None = None
+    max_no_rx_after_connect_s: float | None = None
 
     # Queue sizes
     rx_queue_size: int = 1000

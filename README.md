@@ -20,7 +20,7 @@ Assistant imports in a fresh interpreter while initializing the library.
 Version 2 changes the constructor, metrics, and alarm-state APIs. Test the beta in a development environment before updating an integration. The published Ampio Home Assistant integration remains pinned to the stable 1.0.x library until its version 2 validation is complete.
 
 ```sh
-python -m pip install aioampio==2.0.0b1
+python -m pip install aioampio==2.0.0b4
 ```
 
 ## Connect to a gateway
@@ -117,6 +117,43 @@ print(snapshot.connected, snapshot.rx_total, snapshot.connection_state)
 # For dictionary consumers, replace bridge.metrics["rx_total"] with:
 print(bridge.get_metrics_dict()["rx_total"])
 ```
+
+### Module traffic
+
+`bridge.module_metrics` returns a new dictionary keyed by configured module CAN
+IDs. Its frozen `ModuleMetrics` snapshots expose `rx_total`, `tx_total`,
+`last_rx_age_s`, and `last_rx_at`. Read snapshots on the bridge event loop; consumers do not
+receive a callback for every frame and choose their own publishing interval.
+This API contains no Home Assistant dependencies or availability policy.
+
+```python
+for can_id, module in bridge.module_metrics.items():
+    print(f"{can_id:08x}", module.rx_total, module.tx_total, module.last_rx_age_s)
+```
+
+RX counts structurally valid frames at reader ingress, before queue drops,
+decoding, and state deduplication. Only configured source IDs count. TX counts
+successful bridge sends addressed to a configured module, including each
+multi-frame fragment. Failed or dropped sends do not count; cancellation still
+accounts for an executor send that actually completes. A successful send is not
+an acknowledgement from the destination and does not refresh RX age.
+
+Counters live for the bridge instance and survive reconnects. Each connection
+session clears RX ages, so `None` means no fresh frame from that module in this
+session. Ages use a monotonic clock and are independent of wall-clock changes.
+`last_rx_at` is an aware UTC reception timestamp retained across reconnects,
+including while RX ages reset to `None`. It starts as `None` before the first
+frame. Global `bridge.metrics.last_rx_at` covers all reader ingress and is
+serialized as an ISO 8601 string in `to_dict()`.
+
+Silence no longer triggers reconnects with default `BridgeConfig` settings:
+`idle_reconnect_s`, `rx_gap_reconnect_s`, and `max_no_rx_after_connect_s` now
+all default to `None`. An unpowered module or broken CAN bus is not evidence
+of a broken TCP connection. Applications can implement passive availability
+checks using per-module RX ages. Reported notifier/socket errors, closed
+transport descriptors, failed workers, and explicit reconnect requests still
+recover the connection. Legacy silence reconnect timers remain available only
+when explicitly configured.
 
 ### Alarm state
 

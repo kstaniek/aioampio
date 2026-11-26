@@ -15,7 +15,6 @@ Classes:
 """
 
 import asyncio
-from contextlib import suppress
 import logging
 from typing import Callable
 
@@ -45,7 +44,7 @@ class TxHandler:
         tx_timeout_s: float,
         tx_error_threshold: int,
         get_bus: Callable[[], can.BusABC | None],
-        on_tx_success: Callable[[], None] | None = None,
+        on_tx_success: Callable[[can.Message], None] | None = None,
         on_tx_error: Callable[[Exception], None] | None = None,
     ) -> None:
         """Initialize TX handler.
@@ -111,13 +110,14 @@ class TxHandler:
                     await asyncio.shield(task)
                 except asyncio.CancelledError:
                     # Cancellation cannot stop an executor send using this bus.
-                    with suppress(Exception):
+                    try:
                         await task
+                    except (can.CanError, OSError) as error:
+                        self._handle_error(can_id, error)
+                    else:
+                        self._record_success(msg)
                     raise
-                self._tx_error_streak = 0  # Reset on success
-                self.logger.debug("TX id=0x%X len=%d", can_id, len(msg.data))
-                if self._on_tx_success:
-                    self._on_tx_success()
+                self._record_success(msg)
                 return True
             except can.CanError as e:
                 self._handle_error(can_id, e)
@@ -126,6 +126,13 @@ class TxHandler:
                 # Network/device errors (e.g., device unplugged)
                 self._handle_error(can_id, e)
                 return False
+
+    def _record_success(self, msg: can.Message) -> None:
+        """Account for completed executor sends even if the caller cancelled."""
+        self._tx_error_streak = 0
+        self.logger.debug("TX id=0x%X len=%d", msg.arbitration_id, len(msg.data))
+        if self._on_tx_success:
+            self._on_tx_success(msg)
 
     def _handle_error(self, can_id: int, error: Exception) -> None:
         """Handle transmission error with reconnect logic.
