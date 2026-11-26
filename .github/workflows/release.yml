@@ -11,8 +11,12 @@ permissions:
   id-token: write
 
 jobs:
+  validate:
+    uses: ./.github/workflows/test.yml
+
   build-and-publish-pypi:
     name: Builds and publishes releases to PyPI
+    needs: validate
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.vars.outputs.tag }}
