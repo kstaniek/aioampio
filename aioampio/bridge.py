@@ -1,6 +1,7 @@
 """Ampio Bridge."""
 
 import asyncio
+from collections.abc import Callable
 from datetime import datetime
 from contextlib import suppress
 import logging
@@ -151,6 +152,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         self._tx_errors = 0
         self._tx_total = 0
         self._reconnects = 0
+        self._reconnect_listeners: dict[object, Callable[[int], None]] = {}
         self._last_rx_mono: float | None = None
         self._last_rx_at: datetime | None = None
         self._last_tx_mono: float | None = None
@@ -321,6 +323,32 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             ConnectionState.RECONNECTING,
             ConnectionState.CONNECTING,
         )
+
+    def subscribe_reconnects(
+        self, callback: Callable[[int], None]
+    ) -> Callable[[], None]:
+        """Subscribe to retry-count changes and return an idempotent unsubscribe.
+
+        Callbacks run synchronously on the bridge event loop after the counter
+        changes, before the retry backoff. They must not block. Read
+        ``metrics.reconnects`` for the initial value; subscribing does not emit it.
+        """
+        token = object()
+        self._reconnect_listeners[token] = callback
+
+        def unsubscribe() -> None:
+            self._reconnect_listeners.pop(token, None)
+
+        return unsubscribe
+
+    def _record_reconnect(self) -> None:
+        """Count a retry and notify listeners without disrupting the transport."""
+        self._reconnects += 1
+        for callback in tuple(self._reconnect_listeners.values()):
+            try:
+                callback(self._reconnects)
+            except Exception:  # pylint: disable=broad-exception-caught
+                self.logger.exception("Reconnect count subscriber failed")
 
     def trigger_reconnect(self, reason: str = "manual") -> None:
         """Trigger a reconnect as soon as possible."""
@@ -534,7 +562,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
                 if self._stop_event.is_set():
                     break
                 await self._transition_state(ConnectionState.DISCONNECTED)
-                self._reconnects += 1
+                self._record_reconnect()
                 if had_rx:
                     attempt = 0
                 delay = self._next_backoff(attempt)
