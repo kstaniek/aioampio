@@ -17,6 +17,14 @@ async def wait_for_thread(event: threading.Event) -> None:
             await asyncio.sleep(0.001)
 
 
+def test_existing_constructor() -> None:
+    """Keep the maintenance interface/channel API and backend keyword arguments."""
+    bridge = AmpioBridge({}, "waveshare", "can1", host="192.0.2.1", port=20001)
+    assert bridge._interface == "waveshare"
+    assert bridge._channel == "can1"
+    assert bridge._bus_kwargs == {"host": "192.0.2.1", "port": 20001}
+
+
 async def test_connection_does_not_block_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     """Allow event-loop progress while a blocking CAN constructor is pending."""
     entered = threading.Event()
