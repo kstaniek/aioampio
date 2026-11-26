@@ -1,6 +1,7 @@
 """Ampio Bridge."""
 
 import asyncio
+from datetime import datetime
 from contextlib import suppress
 import logging
 import random
@@ -16,6 +17,7 @@ from aioampio.codec import ampio as _ampio  # noqa: F401
 from aioampio.config import AmpioConfig
 from aioampio.bridge_config import BridgeConfig
 from aioampio.metrics import BridgeMetrics, BridgeMetricsDict
+from aioampio.module_metrics import ModuleMetrics, ModuleTraffic, received_timestamp
 from aioampio.rx_workers import (
     MAX_BATCH_SIZE,
     TIME_SLICE_S,
@@ -100,6 +102,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         self._climates = ClimatesController(self)
 
         self._whitelist: set[int] = set()
+        self._module_traffic = ModuleTraffic(())
 
         # State machine
         self._connection_state = ConnectionState.DISCONNECTED
@@ -148,6 +151,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         self._tx_total = 0
         self._reconnects = 0
         self._last_rx_mono: float | None = None
+        self._last_rx_at: datetime | None = None
         self._last_tx_mono: float | None = None
 
         # rate tracking / smoothing
@@ -198,6 +202,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         """Initialize the bridge."""
         await self._config.initialize(self._ampio_cfg)
         self._whitelist = self._config.whitelist_can_ids
+        self._module_traffic = ModuleTraffic(self._whitelist)
 
         await asyncio.gather(
             self._floors.initialize(),
@@ -336,10 +341,16 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         # Delegate to TX handler
         await self._tx_handler.send(can_id, data)
 
-    def _on_tx_success(self) -> None:
+    def _on_tx_success(self, msg: can.Message) -> None:
         """Callback for successful transmission (updates metrics)."""
+        self._module_traffic.transmit(msg)
         self._tx_total += 1
         self._last_tx_mono = time.monotonic()
+
+    @property
+    def module_metrics(self) -> dict[int, ModuleMetrics]:
+        """Return per-module traffic, with RX ages relative to this session."""
+        return self._module_traffic.snapshot()
 
     def _on_tx_error(self, error: Exception) -> None:
         """Callback for transmission error (updates metrics).
@@ -373,6 +384,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             session_id=self._session_id,
             reconnects=self._reconnects,
             connection_uptime_s=self.connection_uptime_s,
+            last_rx_at=self._last_rx_at,
             rx_total=self._rx_total,
             tx_total=self._tx_total,
             rx_enqueued=self._rx_enqueued,
@@ -570,6 +582,8 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
                     drop_oldest=True,
                     on_drop=self._inc_drop,
                     on_enqueue=self._inc_enq,
+                    on_receive=self._on_rx_received,
+                    on_error=lambda exc: self.trigger_reconnect(str(exc)),
                 )
                 notifier = can.Notifier(bus, [bounded.listener])
                 self._start_rx_workers(n=self._bridge_config.rx_worker_count)
@@ -592,7 +606,12 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
                     )
                     had_rx = True
                 except asyncio.TimeoutError:
-                    # heartbeat tick
+                    # Silence alone is not a transport failure. A closed file
+                    # descriptor or notifier error is evidence of one.
+                    if self._transport_failed(bus, notifier):
+                        self.trigger_reconnect(
+                            "CAN transport closed or notifier failed"
+                        )
                     if self._idle_watchdog():
                         continue
                     self.logger.debug(
@@ -667,6 +686,12 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
             await self._rx_worker_manager.stop()
             self._rx_worker_manager = None
 
+    def _on_rx_received(self, msg: can.Message, received_at: float) -> None:
+        """Capture the last gateway frame time before processing and queue drops."""
+        timestamp = received_timestamp(received_at)
+        self._last_rx_at = timestamp
+        self._module_traffic.receive(msg, received_at, timestamp)
+
     def _on_rx_message_processed(self) -> None:
         """Callback when RX message is processed (updates metrics)."""
         self._rx_total += 1
@@ -696,6 +721,19 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
                 "Bus driver does not support set_filters()", exc_info=True
             )
 
+    @staticmethod
+    def _transport_failed(bus: can.BusABC, notifier: can.Notifier) -> bool:
+        """Check reported transport failures without treating silence as failure."""
+        if isinstance(notifier.exception, Exception):
+            return True
+        try:
+            fd = bus.fileno()
+        except NotImplementedError:
+            return False
+        except OSError:
+            return True
+        return fd is None or (isinstance(fd, int) and fd < 0)
+
     def _should_reconnect(self) -> bool:
         """Return True if we should reconnect."""
         return self._stop_event.is_set() or self._reconnect_now.is_set()
@@ -723,6 +761,7 @@ class AmpioBridge:  # pylint: disable=too-many-instance-attributes,too-many-publ
         self._reconnect_now.clear()
         self._connected_since_mono = time.monotonic()
         self._last_rx_mono = None
+        self._module_traffic.reset_session()
         self.logger.info("Session started: %s", self._session_id)
 
     def _clear_connect_state(self) -> None:

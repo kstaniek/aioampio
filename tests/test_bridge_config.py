@@ -19,9 +19,9 @@ class TestBridgeConfigDefaults:
         assert config.tx_timeout_s == 1.0
 
         # Watchdog timeouts
-        assert config.idle_reconnect_s == 60.0
-        assert config.rx_gap_reconnect_s == 10.0
-        assert config.max_no_rx_after_connect_s == 10.0
+        assert config.idle_reconnect_s is None
+        assert config.rx_gap_reconnect_s is None
+        assert config.max_no_rx_after_connect_s is None
 
         # Queue sizes
         assert config.rx_queue_size == 1000
