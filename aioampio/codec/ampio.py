@@ -19,7 +19,6 @@ from .spec import (
     BitFlag,
     Const,
     EnumMasked,
-    I8,
     Mask,
     Repeat,
     U16,
@@ -306,14 +305,15 @@ def _make_heating_zone(channel: int) -> Callable[[CANFrame], list[AmpioMessage] 
 
     def decoder(frame: CANFrame) -> list[AmpioMessage] | None:
         specs = (
-            U8("current_temperature", 2, mul=0.1),
-            U8("target_temperature", 4, mul=0.1),
-            # (s8 - 100) / 10     ← now explicitly signed via I8
-            I8("temperature_diff", 6, add=-100, mul=0.1),
+            # Temperatures are unsigned 16-bit LE, offset by 1000 tenths.
+            U16("current_temperature", 2, add=-1000, mul=0.1, ndigits=1),
+            U16("target_temperature", 4, add=-1000, mul=0.1, ndigits=1),
+            U8("temperature_diff", 6, add=-100, mul=0.1, ndigits=1),
             BitFlag("active", 7, 0),
             BitFlag("heating", 7, 1),
             BitFlag("day_mode", 7, 2),
             Mask("mode", 7, 0x70),  # keep raw numeric (unchanged)
+            Mask("operating_mode", 7, 0x70, shift=4),
             EnumMasked("mode_name", 7, mask=0x70, shift=4, mapping=_HEATING_MODE_MAP),
         )
         payload = decode_payload(frame.data, specs)

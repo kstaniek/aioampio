@@ -1,7 +1,7 @@
 """Model for climate/thermostat entity."""
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 import logging
 
 from .base import validate_numeric_value
@@ -24,12 +24,15 @@ class Climate:
     target_temperature: float | None = None
     heating: bool | None = None
     state: bool | None = None
+    mode: int | None = None
+    min_temperature: float = 7.0
+    max_temperature: float = 35.0
 
     type: ResourceTypes = ResourceTypes.CLIMATE
 
     # Reasonable temperature ranges (Celsius)
-    _min_temperature: float = -50.0
-    _max_temperature: float = 100.0
+    _min_temperature: ClassVar[float] = -50.0
+    _max_temperature: ClassVar[float] = 100.0
 
     def update(self, topic: str, data: dict[str, Any]) -> bool:  # noqa: ARG002
         """Update climate state from incoming data.
@@ -41,7 +44,7 @@ class Climate:
         Returns:
             True if any state changed, False otherwise
         """
-        changed = False
+        changed = self._update_mode(data.get("operating_mode"))
 
         # Update current temperature
         if "current_temperature" in data:
@@ -112,3 +115,15 @@ class Climate:
                 )
 
         return changed
+
+    def _update_mode(self, mode: Any) -> bool:
+        """Preserve unknown numeric modes without accepting booleans."""
+        if (
+            isinstance(mode, bool)
+            or not isinstance(mode, int)
+            or not 0 <= mode <= 7
+            or self.mode == mode
+        ):
+            return False
+        self.mode = mode
+        return True

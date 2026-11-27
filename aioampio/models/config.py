@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum, unique
+import math
 
 from pydantic import (
     BaseModel,
@@ -473,6 +474,23 @@ class ClimateCfg(PlatformCfg):
     model_config = ConfigDict(extra="forbid")
 
     platform: str = "climate"
+    min_temperature: float = Field(default=7.0, ge=0, le=100)
+    max_temperature: float = Field(default=35.0, ge=0, le=100)
+
+    @field_validator("min_temperature", "max_temperature")
+    @classmethod
+    def validate_temperature_precision(cls, value: float) -> float:
+        """Limits use the same tenth-degree resolution as commands."""
+        if not math.isclose(value * 10, round(value * 10), abs_tol=1e-8):
+            raise ValueError("Temperature limits require tenth-degree precision")
+        return value
+
+    @model_validator(mode="after")
+    def validate_temperature_limits(self) -> ClimateCfg:
+        """Keep application guardrails ordered; they are not discovered limits."""
+        if self.min_temperature >= self.max_temperature:
+            raise ValueError("min_temperature must be less than max_temperature")
+        return self
 
 
 class AreaCfg(BaseModel):

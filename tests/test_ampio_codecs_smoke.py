@@ -238,9 +238,9 @@ def _expected_heating_zone(base_index: int) -> Callable[[list], None]:
         assert "active" in msg.payload
         assert msg.payload["active"]
         assert "current_temperature" in msg.payload
-        assert msg.payload["current_temperature"] == 22.5
+        assert msg.payload["current_temperature"] == 24.9
         assert "target_temperature" in msg.payload
-        assert msg.payload["target_temperature"] == 17.6
+        assert msg.payload["target_temperature"] == 20.0
         assert "temperature_diff" in msg.payload
         assert msg.payload["temperature_diff"] == -4.9
         assert "day_mode" in msg.payload

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Add validated M-RT setpoint commands and modes 0-3, configured heating-topic
+  addressing, finite temperature guardrails, serialized transactions, and
+  reported mode state. Other modules and off/block remain read-only. Default
+  application limits are 7-35 degrees Celsius and can be configured per zone.
+
+- Decode heating-zone current and target temperatures as full 16-bit
+  little-endian values with the 1000 offset. For example, `c7 04` now reports
+  22.3 degrees Celsius instead of 19.9. Decode temperature differences as
+  unsigned bytes before applying their offset.
+
 ## 2.3.0
 
 - Support native masked on/off light groups on MREL8S (model 4), outputs 1–8.
