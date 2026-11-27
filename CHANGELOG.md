@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 2.4.0
+
+- Pace Satel alarm command fragments with a 10 ms inter-frame gap and serialize
+  complete alarm transactions. This restores zone arming/disarming on the
+  validated Waveshare path without changing PIN encoding or zone masks. Other
+  multiframe command paths retain their existing timing.
+
 - Add independent `light_groups.members_visible`, defaulting to true, so
   Home Assistant can hide active group members without disabling their states
   or direct controls.

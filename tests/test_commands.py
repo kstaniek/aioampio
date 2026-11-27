@@ -166,3 +166,54 @@ async def test_rgbw_bursts_are_paced_and_do_not_interleave() -> None:
     assert all(
         after[0] - before[0] >= 0.009999 for before, after in zip(sent, sent[1:])
     )
+
+
+async def test_alarm_transactions_are_paced_and_serialized() -> None:
+    """Keep each arm/disarm frame sequence complete with a gap between its frames."""
+    bridge = await make_bridge()
+    real_sleep = asyncio.sleep
+    events = []
+
+    async def send(_can_id: int, *, data: bytes) -> None:
+        events.append(("send", data[5]))
+        await real_sleep(0)
+
+    async def sleep(delay: float) -> None:
+        events.append(("sleep", delay))
+        await real_sleep(0)
+
+    bridge.send.side_effect = send
+    with patch("aioampio.controllers.base.asyncio.sleep", side_effect=sleep):
+        await asyncio.gather(
+            bridge.alarm_control_panels.arm_in_mode0("00000123_alarm1", "1234"),
+            bridge.alarm_control_panels.disarm("00000123_alarm1", "1234"),
+        )
+    expected = []
+    for _ in range(2):
+        for sequence in range(9):
+            if sequence:
+                expected.append(("sleep", 0.01))
+            expected.append(("send", sequence))
+    assert events == expected
+    frames = bridge.send.await_args_list
+    for offset, command in [(0, 0x80), (9, 0x84)]:
+        payload = b"".join(
+            c.kwargs["data"][6:] for c in frames[offset + 1 : offset + 9]
+        )
+        assert payload == bytes((0x14, 0x0D, command)) + bytes.fromhex(
+            "1234ffffffffffff01000000"
+        )
+
+
+async def test_alarm_send_failure_stops_transaction_and_releases_lock() -> None:
+    """A failed frame aborts once and the next explicit command can still run."""
+    bridge = await make_bridge()
+    bridge.send.side_effect = [None, None, ConnectionError("test failure")]
+    with pytest.raises(ConnectionError, match="test failure"):
+        await bridge.alarm_control_panels.arm_in_mode0("00000123_alarm1", "1234")
+    assert bridge.send.await_count == 3
+    bridge.send.reset_mock(side_effect=True)
+    await asyncio.wait_for(
+        bridge.alarm_control_panels.disarm("00000123_alarm1", "1234"), timeout=1
+    )
+    assert bridge.send.await_count == 9

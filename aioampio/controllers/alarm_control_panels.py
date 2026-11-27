@@ -1,12 +1,21 @@
 """Alarm Control Panels Controller."""
 
+import asyncio
+from typing import TYPE_CHECKING
+
 from aioampio.controllers.base import AmpioResourceController
 from aioampio.models.alarm_control_panel import AlarmControlPanel
 from aioampio.models.resource import ResourceTypes
 from .utils import get_entity_index
 
 
+if TYPE_CHECKING:
+    from aioampio.bridge import AmpioBridge
+
+
 SATEL_CTRL_CAN_ID = 0x0F002000
+# Nine-frame PIN commands need pacing on the validated Waveshare/Satel path.
+SATEL_FRAME_INTERVAL_S = 0.01
 
 
 def pin_to_satel(pin: str | None) -> bytes:
@@ -30,6 +39,11 @@ class AlarmControlPanelsController(AmpioResourceController[AlarmControlPanel]):
 
     item_type = ResourceTypes.ALARM_CONTROL_PANEL
     item_cls = AlarmControlPanel
+
+    def __init__(self, bridge: "AmpioBridge") -> None:
+        """Keep complete alarm transactions from interleaving across zones."""
+        super().__init__(bridge)
+        self._command_lock = asyncio.Lock()
 
     async def _send_alarm_command(self, id: str, code: str, command: int) -> None:
         """Helper to send alarm command with given command byte."""
@@ -55,7 +69,10 @@ class AlarmControlPanelsController(AmpioResourceController[AlarmControlPanel]):
         # pin: Encoded PIN as 8 bytes
         # zone_mask: 4-byte little-endian mask for the target zone
         payload = bytes((0x14, 0x0D, command)) + pin + zone_mask
-        await self._send_multiframe_command(id, payload)
+        async with self._command_lock:
+            await self._send_multiframe_command(
+                id, payload, inter_frame_delay=SATEL_FRAME_INTERVAL_S
+            )
 
     async def arm_in_mode0(self, id: str, code: str) -> None:
         """Arm the alarm in mode 0 (stay)."""

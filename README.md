@@ -195,6 +195,16 @@ transport descriptors, failed workers, and explicit reconnect requests still
 recover the connection. Legacy silence reconnect timers remain available only
 when explicitly configured.
 
+### Alarm command delivery
+
+The alarm controller in 2.4.0 serializes arm/disarm transactions and sends
+fragments with a 10 ms gap. A zone-3 test on M-CON-232-s module `00001ecc` found
+that a sub-millisecond nine-frame burst produced no reply, while the identical
+payload with 10 ms gaps returned `OK` and started arming. PIN encoding, the
+zone mask, and the command destination are unchanged. Other multiframe
+controllers keep their existing timing. Synthetic tests cover pacing,
+concurrent transactions, and aborting on transmission failure.
+
 ### Alarm state
 
 Replace alarm.state access with alarm.get_state(). It returns the armed, arming, arming_10s, breached, and alarm flags. Each flag can be None until its first update.
@@ -228,7 +238,7 @@ MLED groups also accept a shared brightness level. Individual controls remain.
 Group power follows member feedback: any on, all off, otherwise unknown.
 Relay groups have no brightness state. Group IDs remain stable across renames.
 
-The unreleased `members_enabled` option defaults to `true`. Set
+The `members_enabled` option added in 2.4.0 defaults to `true`. Set
 `members_enabled: false` on a group to let Home Assistant initially register its
 individual members as disabled. All member resources and feedback subscriptions
 remain active in this library, so native group feedback and commands still work.

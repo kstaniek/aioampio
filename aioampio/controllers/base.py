@@ -320,7 +320,9 @@ class AmpioResourceController[AmpioResource](ControllerMetrics):
     # Internal Ampio API Commands
     # ---------------------------------------------------------------------
 
-    async def _send_multiframe_command(self, id: str, payload: bytes) -> None:
+    async def _send_multiframe_command(
+        self, id: str, payload: bytes, *, inter_frame_delay: float = 0.0
+    ) -> None:
         """Send a multiframe command using the controller CAN ID path."""
         device = self.get_device(id)
         if device is None:
@@ -328,7 +330,9 @@ class AmpioResourceController[AmpioResource](ControllerMetrics):
             return
         frames = list(generate_multican_payload(device.can_id, payload))
         self._metrics_inc_send_attempt(len(frames))
-        for p in frames:
+        for index, p in enumerate(frames):
+            if index and inter_frame_delay > 0:
+                await asyncio.sleep(inter_frame_delay)
             await self._bridge.send(CTRL_CAN_ID, data=p)
 
     async def _send_command(self, id: str, payload: bytes) -> None:
