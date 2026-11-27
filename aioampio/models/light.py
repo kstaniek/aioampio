@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 import logging
 
 from .base import validate_byte_value
@@ -28,8 +28,10 @@ class Light:
 
     state: dict[str, Any] = field(default_factory=dict)
     _rgb_channels: dict[str, bool] = field(default_factory=dict)
-    _rgb_channel_count: int = 4  # R, G, B, W
+    _rgb_channel_count: ClassVar[int] = 4  # R, G, B, W
     members: list[str] = field(default_factory=list)
+    members_enabled: bool = True
+    members_visible: bool = True
 
     @property
     def supports_dimming(self) -> bool:

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add independent `light_groups.members_visible`, defaulting to true, so
+  Home Assistant can hide active group members without disabling their states
+  or direct controls.
+
+- Add the boolean `light_groups.members_enabled` option, defaulting to true,
+  and carry it on group resources so Home Assistant can register individual
+  members as disabled by default while retaining their feedback.
+
 - Add validated M-RT setpoint commands and modes 0-3, configured heating-topic
   addressing, finite temperature guardrails, serialized transactions, and
   reported mode state. Other modules and off/block remain read-only. Default

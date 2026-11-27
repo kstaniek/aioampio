@@ -168,6 +168,8 @@ class AmpioConfig:
                 dimming=device.model == DeviceType.MLED,
                 owner=device.id,
                 area=group.area,
+                members_enabled=group.members_enabled,
+                members_visible=group.members_visible,
                 members=[
                     resource_id(member, device.can_id) for member in group.members
                 ],

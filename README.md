@@ -228,6 +228,21 @@ MLED groups also accept a shared brightness level. Individual controls remain.
 Group power follows member feedback: any on, all off, otherwise unknown.
 Relay groups have no brightness state. Group IDs remain stable across renames.
 
+The unreleased `members_enabled` option defaults to `true`. Set
+`members_enabled: false` on a group to let Home Assistant initially register its
+individual members as disabled. All member resources and feedback subscriptions
+remain active in this library, so native group feedback and commands still work.
+The library exposes the setting on the group resource; Home Assistant applies
+the registry default and preserves existing user choices. If groups overlap,
+HA defaults a member to disabled when any containing group sets this to false.
+The independent `members_visible` option also defaults to `true`. Setting it to
+`false` lets Home Assistant hide members while keeping them enabled. This is
+recommended for members that should retain state, history and direct controls
+but be omitted from automatic dashboards and area/device/label targets. For
+example, use `members_enabled: true` with `members_visible: false`. Both defaults
+preserve saved registry choices; overlapping groups use `false` if any containing
+group requests it. Use YAML booleans; strings such as `"false"` are rejected.
+
 ### Test suite
 
 ```sh

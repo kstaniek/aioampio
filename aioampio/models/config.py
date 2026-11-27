@@ -155,6 +155,8 @@ class LightGroupCfg(BaseModel):
     id: str = Field(min_length=1)
     name: str
     members: list[str] = Field(min_length=1)
+    members_enabled: bool = Field(default=True, strict=True)
+    members_visible: bool = Field(default=True, strict=True)
     area: str | None = None
 
 
